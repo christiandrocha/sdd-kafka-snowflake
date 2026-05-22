@@ -1,0 +1,27 @@
+{
+  "name": "snowflake-sink-items",
+  "config": {
+    "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
+    "tasks.max": "2",
+
+    "topics": "pg.public.order_items",
+
+    "snowflake.url.name": "${SNOWFLAKE_URL}",
+    "snowflake.user.name": "${SNOWFLAKE_USER}",
+    "snowflake.private.key": "${SNOWFLAKE_PRIVATE_KEY}",
+    "snowflake.database.name": "${SNOWFLAKE_DATABASE}",
+    "snowflake.schema.name": "BRONZE",
+    "snowflake.role.name": "${SNOWFLAKE_ROLE}",
+
+    "snowflake.ingestion.method": "SNOWPIPE",
+    "snowflake.schema.registry.url": "http://schema-registry:8081",
+
+    "buffer.count.records": "5000",
+    "buffer.flush.time": "120",
+    "buffer.size.bytes": "25000000",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

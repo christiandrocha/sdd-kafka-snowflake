@@ -1,0 +1,49 @@
+groups:
+  - name: kafka_cdc_alerts
+    rules:
+
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_group_lag > 10000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer lag too high"
+          description: "Consumer lag for {{ $labels.topic }} is {{ $value }} messages. Snowflake Sink may be falling behind."
+
+      - alert: KafkaConnectTaskFailed
+        expr: kafka_connect_connector_task_status != 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka Connect task failed"
+          description: "Connector {{ $labels.connector }} task {{ $labels.task }} is not RUNNING."
+
+      - alert: DagsterRunFailed
+        expr: dagster_run_status{status="FAILURE"} > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dagster pipeline run failed"
+          description: "dbt pipeline run failed — check Dagster UI at http://localhost:3000"
+
+      - alert: KafkaBrokerDown
+        expr: up{job="kafka-jmx"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka JMX exporter unreachable"
+          description: "JMX exporter for Kafka is down — broker may be unhealthy."
+
+      - alert: BronzeFreshnessViolation
+        expr: >
+          (time() - kafka_consumer_group_last_commit_timestamp_ms / 1000) > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bronze table freshness SLA violated"
+          description: "No new commits to Bronze topic {{ $labels.topic }} in over 15 minutes."

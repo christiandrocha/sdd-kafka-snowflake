@@ -1,0 +1,23 @@
+FROM debezium/connect:2.4
+
+USER root
+
+ENV SNOWFLAKE_CONNECTOR_VERSION=2.1.2 \
+    CONNECT_PLUGIN_PATH=/kafka/connect
+
+RUN mkdir -p ${CONNECT_PLUGIN_PATH}/snowflake-connector
+
+# Snowflake Kafka Connector (official, includes Avro + Schema Registry support)
+RUN curl -fsSL \
+    "https://repo1.maven.org/maven2/com/snowflake/snowflake-kafka-connector/${SNOWFLAKE_CONNECTOR_VERSION}/snowflake-kafka-connector-${SNOWFLAKE_CONNECTOR_VERSION}.jar" \
+    -o ${CONNECT_PLUGIN_PATH}/snowflake-connector/snowflake-kafka-connector.jar
+
+# Bouncy Castle (required for Snowflake key-pair authentication)
+RUN curl -fsSL \
+    "https://repo1.maven.org/maven2/org/bouncycastle/bc-fips/1.0.2.4/bc-fips-1.0.2.4.jar" \
+    -o ${CONNECT_PLUGIN_PATH}/snowflake-connector/bc-fips.jar && \
+    curl -fsSL \
+    "https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-fips/1.0.7/bcpkix-fips-1.0.7.jar" \
+    -o ${CONNECT_PLUGIN_PATH}/snowflake-connector/bcpkix-fips.jar
+
+USER kafka

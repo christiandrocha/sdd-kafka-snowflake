@@ -1,0 +1,354 @@
+version: 2
+
+models:
+  - name: bronze_payment_events
+    description: >
+      Typed and normalized view over raw Snowpipe PAYMENT_EVENTS table.
+      One row per event_id (merge by event_id).
+      Expands nested event JSONB into flat columns.
+      Normalizes event.timestamp: source sends int (created events, ~17%)
+      or float in scientific notation (all others, ~83%) — both epoch ms.
+      Real payment lifecycle: created → authorized → captured → succeeded
+      → settled → closed. Refund path: captured → refunded → closed.
+    columns:
+      - name: event_id
+        description: Unique identifier for the payment event (UUID).
+        tests: [unique, not_null]
+
+      - name: payment_id
+        description: >
+          Payment this event belongs to. Multiple events share the same
+          payment_id (one per lifecycle transition). Note: in the real
+          data, payment_ids are reused across multiple complete lifecycle
+          cycles within the same file.
+        tests: [not_null]
+
+      - name: event_name
+        description: >
+          Payment lifecycle event name.
+          Full lifecycle: created → authorized → captured → succeeded → settled → closed
+          Refund path:   captured → refunded → closed
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['created', 'authorized', 'captured', 'succeeded',
+                       'settled', 'closed', 'refunded']
+
+      - name: event_timestamp_ms
+        description: >
+          Event timestamp as epoch milliseconds (BIGINT).
+          Normalized from source: int for created events, float scientific
+          notation for all others. CAST via FLOAT handles both.
+        tests: [not_null]
+
+      - name: event_timestamp
+        description: Event timestamp as TIMESTAMP_NTZ (derived from event_timestamp_ms).
+        tests: [not_null]
+
+      - name: dt_current_timestamp
+        description: >
+          Processing timestamp from source system (string, format: YYYY-MM-DD HH:MM:SS.mmm).
+          Kept for audit. Use event_timestamp as canonical event time.
+
+      - name: op
+        description: Debezium CDC operation (c=insert, u=update, r=snapshot).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['c', 'u', 'd', 'r']
+
+      - name: source_ts_ms
+        description: CDC event timestamp in PostgreSQL (epoch ms).
+        tests: [not_null]
+
+      - name: kafka_offset
+        description: Kafka message offset. Used for deduplication within batch.
+        tests: [not_null]
+
+      - name: kafka_partition
+        description: Kafka partition number.
+
+      - name: kafka_created_at
+        description: >
+          Snowpipe ingestion time (epoch ms from RECORD_METADATA:CreateTime).
+          Used as incremental filter — reliable for late-arriving events.
+        tests: [not_null]
+
+  - name: bronze_orders
+    description: >
+      Orders from Kafka (kafka_orders topic) via Snowpipe. One row per order_id.
+      Hub table — links all domains via CPF (user), CNPJ (restaurant),
+      driver_id (string), payment UUID, rating UUID.
+    columns:
+      - name: order_id
+        description: Unique order identifier (UUID).
+        tests: [unique, not_null]
+      - name: user_key
+        description: CPF of the ordering user (000.000.000-00 or digits-only).
+        tests: [not_null]
+      - name: restaurant_key
+        description: CNPJ of the restaurant (00.000.000/0000-00 or digits-only).
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_payments
+    description: >
+      Payment entity from Kafka (kafka_payments topic) via Snowpipe.
+      One row per payment_id. Includes full payment details: amounts, card info,
+      provider, status, timestamps.
+    columns:
+      - name: payment_id
+        description: Unique payment identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_order_items
+    description: >
+      Order line items from MongoDB (mongodb_items) via Snowpipe.
+      One row per order_item_id. Largest table — 110,001 records (85% of volume).
+      Separate Snowflake Sink connector with larger buffer (5000 records / 120s).
+    columns:
+      - name: order_item_id
+        description: Unique order item identifier (UUID).
+        tests: [unique, not_null]
+      - name: order_id
+        description: Parent order this item belongs to.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_gps_events
+    description: >
+      GPS telemetry events from Kafka (kafka_gps topic) via Snowpipe.
+      One row per gps_id. Lat/lon/altitude/speed/direction per GPS ping.
+    columns:
+      - name: gps_id
+        description: Unique GPS event identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_routes
+    description: >
+      Delivery routes from Kafka (kafka_route topic) via Snowpipe.
+      One row per route_id. Start/end coordinates, distance, estimated duration.
+    columns:
+      - name: route_id
+        description: Unique route identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_driver_shifts
+    description: >
+      Driver shift records from Kafka (kafka_shift topic) via Snowpipe.
+      One row per shift_id. Includes earnings, distance, orders, rating per shift.
+    columns:
+      - name: shift_id
+        description: Unique shift identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_order_status
+    description: >
+      Order status events from Kafka (kafka_status topic) via Snowpipe.
+      One row per status_id (INTEGER PK, not UUID).
+      Nested JSONB status field expanded: status_name + timestamp (float ms, ADR-13).
+    columns:
+      - name: status_id
+        description: Unique status event identifier (INTEGER).
+        tests: [unique, not_null]
+      - name: status_name
+        description: Status name from nested status JSONB field.
+        tests: [not_null]
+      - name: status_timestamp_ms
+        description: Status timestamp as epoch ms (BIGINT, via FLOAT cast — ADR-13).
+        tests: [not_null]
+      - name: status_timestamp
+        description: Status timestamp as TIMESTAMP_NTZ.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_receipts
+    description: >
+      Receipts from Kafka (kafka_receipts topic) via Snowpipe.
+      One row per receipt_id. No dt_current_timestamp — receipt_generated_at
+      is the domain timestamp.
+    columns:
+      - name: receipt_id
+        description: Unique receipt identifier (UUID).
+        tests: [unique, not_null]
+      - name: receipt_generated_at
+        description: When the receipt was generated (TIMESTAMP_NTZ, domain timestamp).
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_search_events
+    description: >
+      User search events from Kafka (kafka_search topic) via Snowpipe.
+      One row per search_id. No dt_current_timestamp — search_timestamp is domain time.
+    columns:
+      - name: search_id
+        description: Unique search event identifier (UUID).
+        tests: [unique, not_null]
+      - name: search_timestamp
+        description: When the search occurred (TIMESTAMP_NTZ, domain timestamp).
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_recommendations
+    description: >
+      ML recommendation events from MongoDB (mongodb_recommendations) via Snowpipe.
+      One row per event_id. Event types: view, click, purchase, dismiss.
+    columns:
+      - name: event_id
+        description: Unique recommendation event identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_support_tickets
+    description: >
+      Customer support tickets from MongoDB (mongodb_support) via Snowpipe.
+      One row per ticket_id. Category, description, status, opened_at.
+    columns:
+      - name: ticket_id
+        description: Unique support ticket identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_inventory
+    description: >
+      Restaurant inventory stock levels from PostgreSQL (postgres_inventory) via Snowpipe.
+      One row per stock_id. No dt_current_timestamp — last_updated is domain timestamp.
+    columns:
+      - name: stock_id
+        description: Unique inventory record identifier (UUID).
+        tests: [unique, not_null]
+      - name: last_updated
+        description: When inventory was last updated (TIMESTAMP_NTZ, domain timestamp).
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_users_mongo
+    description: >
+      Users from MongoDB (mongodb_users) via Snowpipe. One row per uuid.
+      Contains contact info: email, phone, city, country, delivery_address.
+      CPF is the business key linking to users_mssql and orders.
+    columns:
+      - name: uuid
+        description: Unique user identifier (UUID).
+        tests: [unique, not_null]
+      - name: cpf
+        description: Brazilian tax ID (CPF). Business key for cross-source user merge.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_users_mssql
+    description: >
+      Users from MSSQL (mssql_users) via Snowpipe. One row per uuid.
+      Contains extended profile: first/last name, birthday, job, company.
+      CPF is the business key linking to users_mongo and orders.
+    columns:
+      - name: uuid
+        description: Unique user identifier (UUID).
+        tests: [unique, not_null]
+      - name: cpf
+        description: Brazilian tax ID (CPF). Business key for cross-source user merge.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_restaurants
+    description: >
+      Restaurants from MySQL (mysql_restaurants) via Snowpipe. One row per uuid.
+      CNPJ is the business key referenced by orders.restaurant_key.
+      opening_time/closing_time stored as VARCHAR (source is MySQL TIME type).
+    columns:
+      - name: uuid
+        description: Unique restaurant identifier (UUID).
+        tests: [unique, not_null]
+      - name: cnpj
+        description: Brazilian business tax ID. Business key referenced by orders.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_drivers
+    description: >
+      Drivers from PostgreSQL (postgres_drivers) via Snowpipe. One row per uuid.
+      driver_id (string) is referenced by orders.driver_key and driver_shifts.
+    columns:
+      - name: uuid
+        description: Unique driver identifier (UUID).
+        tests: [unique, not_null]
+      - name: driver_id
+        description: Driver business identifier (string). Referenced by orders and shifts.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_products
+    description: >
+      Products from MySQL (mysql_products) via Snowpipe. One row per product_id.
+      PK is product_id VARCHAR (not UUID — differs from other entity tables).
+      Includes nutritional, pricing, and categorization data.
+    columns:
+      - name: product_id
+        description: Unique product identifier (VARCHAR, not UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_menu_sections
+    description: >
+      Menu sections from MySQL (mysql_menu) via Snowpipe. One row per menu_section_id.
+      Groups products within a restaurant's menu.
+    columns:
+      - name: menu_section_id
+        description: Unique menu section identifier (UUID).
+        tests: [unique, not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]
+
+  - name: bronze_ratings
+    description: >
+      Ratings from MySQL (mysql_ratings) via Snowpipe. One row per rating_id.
+      rating_id is the PK; uuid is the FK referenced by orders.rating_key.
+    columns:
+      - name: rating_id
+        description: Unique rating identifier (UUID, PK).
+        tests: [unique, not_null]
+      - name: uuid
+        description: Secondary UUID referenced by orders.rating_key.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]

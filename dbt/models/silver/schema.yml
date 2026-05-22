@@ -1,0 +1,147 @@
+version: 2
+
+models:
+  - name: silver_payment_events_history
+    description: >
+      Complete payment event history. One row per event_id, all payments.
+      Merge by event_id — corrected events replace originals.
+      DELETEs excluded. Includes terminal/refund path flags and event_sequence.
+      Real lifecycle: created → authorized → captured → succeeded → settled → closed
+      Refund path:    captured → refunded → closed
+    columns:
+      - name: event_id
+        description: Unique event identifier.
+        tests: [unique, not_null]
+
+      - name: payment_id
+        description: Payment this event belongs to.
+        tests: [not_null]
+
+      - name: event_name
+        description: Payment lifecycle event name.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['created', 'authorized', 'captured', 'succeeded',
+                       'settled', 'closed', 'refunded']
+
+      - name: event_timestamp
+        description: When the event occurred (TIMESTAMP_NTZ).
+        tests: [not_null]
+
+      - name: is_terminal
+        description: True if event_name is 'closed' (terminal state).
+        tests: [not_null]
+
+      - name: is_success_path
+        description: True if event is on the success path (succeeded, settled, closed).
+        tests: [not_null]
+
+      - name: is_refund
+        description: True if event_name is 'refunded'.
+        tests: [not_null]
+
+      - name: event_sequence
+        description: >
+          Global position of this event in the payment history (1=first).
+          Computed from event_timestamp_ms ascending per payment_id.
+          Note: payment_ids are reused across lifecycle cycles — sequence
+          is global across all cycles for this payment_id.
+        tests: [not_null]
+
+      - name: op
+        description: CDC operation (c=insert, u=update). No deletes in this model.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['c', 'u', 'r']
+
+  - name: silver_payment_current_state
+    description: >
+      Current state of each payment. One row per payment_id.
+      Latest non-deleted event by event_timestamp_ms.
+      Merge by payment_id — state transitions overwrite.
+      Includes stage_order (1-6) for funnel analysis.
+      Terminal state: closed (via success or refund path).
+    columns:
+      - name: payment_id
+        description: Unique payment identifier.
+        tests: [unique, not_null]
+
+      - name: latest_event_id
+        description: event_id of the most recent event.
+        tests: [not_null]
+
+      - name: current_status
+        description: Most recent event_name for this payment.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['created', 'authorized', 'captured', 'succeeded',
+                       'settled', 'closed', 'refunded']
+
+      - name: status_updated_at
+        description: When the current status was set (TIMESTAMP_NTZ).
+        tests: [not_null]
+
+      - name: is_closed
+        description: True if payment reached terminal state (closed).
+        tests: [not_null]
+
+      - name: closed_via_refund
+        description: True if last event before closed was refunded.
+        tests: [not_null]
+
+      - name: is_in_progress
+        description: True if payment has not yet reached closed state.
+        tests: [not_null]
+
+      - name: stage_order
+        description: >
+          Numeric stage position for funnel ordering.
+          1=created, 2=authorized, 3=captured, 4=succeeded/refunded,
+          5=settled, 6=closed.
+        tests: [not_null]
+
+  - name: silver_users
+    description: >
+      Unified user entity from MongoDB and MSSQL sources.
+      FULL OUTER JOIN on CPF normalized to 11 digits (digits only).
+      users_mongo wins on contact fields (email, phone, city, delivery_address);
+      users_mssql contributes extended profile (first/last name, birthday, job).
+      source column indicates which system(s) provided the record.
+      materialized='table' — FULL OUTER JOIN is incompatible with incremental merge.
+    columns:
+      - name: cpf_normalized
+        description: CPF normalized to 11 digits (no punctuation). Join key.
+        tests: [unique, not_null]
+      - name: uuid
+        description: User UUID (from whichever source has the record).
+        tests: [not_null]
+      - name: source
+        description: Which source system(s) provided the record (mongo, mssql, both).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['mongo', 'mssql', 'both']
+
+  - name: silver_orders
+    description: >
+      Enriched orders. One row per order_id.
+      Extends bronze_orders with restaurant_name (via CNPJ), driver_name,
+      and user_email (via CPF join to bronze_users_mongo).
+      Includes CPF and CNPJ normalized columns for downstream Gold joins.
+      Incremental merge on order_id.
+    columns:
+      - name: order_id
+        description: Unique order identifier (UUID).
+        tests: [unique, not_null]
+      - name: user_cpf_normalized
+        description: CPF digits only (11 chars). Business key for user join.
+        tests: [not_null]
+      - name: restaurant_cnpj_normalized
+        description: CNPJ digits only (14 chars). Business key for restaurant join.
+        tests: [not_null]
+      - name: kafka_created_at
+        description: Snowpipe ingestion time (epoch ms). Incremental filter key.
+        tests: [not_null]

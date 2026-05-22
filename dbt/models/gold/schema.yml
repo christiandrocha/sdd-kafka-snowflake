@@ -1,0 +1,180 @@
+version: 2
+
+models:
+  - name: gold_payments_by_status
+    description: >
+      Payment count grouped by current status. One row per status value.
+      7 possible statuses: created, authorized, captured, succeeded,
+      settled, refunded, closed.
+      Incremental merge by current_status.
+    columns:
+      - name: current_status
+        description: Payment lifecycle status value.
+        tests:
+          - unique
+          - not_null
+          - accepted_values:
+              values: ['created', 'authorized', 'captured', 'succeeded',
+                       'settled', 'closed', 'refunded']
+
+      - name: total_payments
+        description: Total payments currently in this status.
+        tests: [not_null]
+
+      - name: closed_count
+        description: Payments that reached closed state.
+
+      - name: refunded_count
+        description: Payments closed via refund path.
+
+      - name: in_progress_count
+        description: Payments not yet closed.
+
+  - name: gold_payment_funnel
+    description: >
+      Payment conversion funnel. One row per lifecycle stage (7 stages).
+      Full table refresh. Shows distinct payment_ids per stage and
+      conversion rate from entry (created).
+      Stage order: created(1) → authorized(2) → captured(3) →
+      succeeded(4) → refunded(5 alt) → settled(6) → closed(7).
+    columns:
+      - name: stage_order
+        description: Numeric funnel order (1=created ... 7=closed).
+        tests: [unique, not_null]
+
+      - name: stage
+        description: event_name for this funnel stage.
+        tests: [unique, not_null]
+
+      - name: payment_count
+        description: Distinct payment_ids that reached this stage.
+        tests: [not_null]
+
+      - name: conversion_rate_pct
+        description: Percentage of entry payments (created) that reached this stage.
+
+  - name: gold_payment_lifecycle
+    description: >
+      Payment lifecycle timing. One row per payment_id.
+      Pivots all 7 lifecycle stages into timestamp columns.
+      Computes duration (seconds) between each transition.
+      Merge by payment_id. Note: payment_ids reused in real data —
+      reflects the last observed lifecycle cycle per payment_id.
+    columns:
+      - name: payment_id
+        description: Unique payment identifier.
+        tests: [unique, not_null]
+
+      - name: created_at
+        description: Timestamp of created event.
+
+      - name: authorized_at
+        description: Timestamp of authorized event.
+
+      - name: captured_at
+        description: Timestamp of captured event.
+
+      - name: succeeded_at
+        description: Timestamp of succeeded event (null on refund path).
+
+      - name: settled_at
+        description: Timestamp of settled event (null on refund path).
+
+      - name: refunded_at
+        description: Timestamp of refunded event (null on success path).
+
+      - name: closed_at
+        description: Timestamp of closed event (terminal state).
+
+      - name: had_refund
+        description: True if payment went through refund path.
+        tests: [not_null]
+
+      - name: created_to_authorized_sec
+        description: Seconds from created to authorized.
+
+      - name: authorized_to_captured_sec
+        description: Seconds from authorized to captured.
+
+      - name: captured_to_succeeded_sec
+        description: Seconds from captured to succeeded (success path).
+
+      - name: succeeded_to_settled_sec
+        description: Seconds from succeeded to settled.
+
+      - name: settled_to_closed_sec
+        description: Seconds from settled to closed.
+
+      - name: captured_to_refunded_sec
+        description: Seconds from captured to refunded (refund path).
+
+      - name: total_lifecycle_sec
+        description: Total seconds from created to closed.
+
+      - name: reached_stage
+        description: Most advanced lifecycle stage reached.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['created', 'authorized', 'captured', 'succeeded',
+                       'settled', 'refunded', 'closed']
+
+  - name: gold_revenue_per_restaurant
+    description: >
+      Revenue aggregation per restaurant per day.
+      Joins silver_orders (CNPJ business key) with bronze_order_items (subtotals).
+      One row per restaurant per order_day.
+      Full table refresh — used for time-series dashboards.
+    columns:
+      - name: restaurant_cnpj_normalized
+        description: CNPJ digits only (14 chars). Business key.
+        tests: [not_null]
+      - name: order_day
+        description: Calendar date of orders (DATE).
+        tests: [not_null]
+      - name: num_orders
+        description: Distinct orders on this day for this restaurant.
+        tests: [not_null]
+      - name: gross_revenue
+        description: Sum of order total_amount for this restaurant on this day.
+        tests: [not_null]
+
+  - name: gold_driver_performance
+    description: >
+      Driver performance summary per shift.
+      Combines bronze_driver_shifts with silver_orders (aggregate delivery count)
+      and latest driver profile from bronze_drivers.
+      One row per shift_id. Full table refresh.
+    columns:
+      - name: shift_id
+        description: Unique shift identifier (UUID).
+        tests: [unique, not_null]
+      - name: driver_id
+        description: Driver business identifier. Join key to drivers and orders.
+        tests: [not_null]
+      - name: earnings_per_hour
+        description: Computed BRL earnings divided by shift hours. Null if shift_duration_min = 0.
+
+  - name: gold_user_behavior
+    description: >
+      User behavior summary per unified CPF.
+      Aggregates orders (silver_orders), searches (bronze_search_events),
+      and recommendations (bronze_recommendations) per silver_users record.
+      One row per user (CPF). Full table refresh.
+      engagement_tier: high (≥10 orders), medium (≥3), low (≥1), inactive (0).
+    columns:
+      - name: cpf_normalized
+        description: CPF digits only (11 chars). Primary user key.
+        tests: [unique, not_null]
+      - name: engagement_tier
+        description: User engagement segment based on order count.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['high', 'medium', 'low', 'inactive']
+      - name: num_orders
+        description: Total orders placed by this user.
+        tests: [not_null]
+      - name: total_spend
+        description: Total BRL spent across all orders.
+        tests: [not_null]

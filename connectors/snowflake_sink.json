@@ -1,0 +1,27 @@
+{
+  "name": "snowflake-sink",
+  "config": {
+    "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
+    "tasks.max": "4",
+
+    "topics": "pg.public.payment_events,pg.public.orders,pg.public.payments,pg.public.order_items,pg.public.gps_events,pg.public.order_status,pg.public.routes,pg.public.receipts,pg.public.driver_shifts,pg.public.search_events,pg.public.recommendations,pg.public.support_tickets,pg.public.users_mongo,pg.public.users_mssql,pg.public.restaurants,pg.public.drivers,pg.public.products,pg.public.menu_sections,pg.public.ratings,pg.public.inventory",
+
+    "snowflake.url.name": "${SNOWFLAKE_URL}",
+    "snowflake.user.name": "${SNOWFLAKE_USER}",
+    "snowflake.private.key": "${SNOWFLAKE_PRIVATE_KEY}",
+    "snowflake.database.name": "${SNOWFLAKE_DATABASE}",
+    "snowflake.schema.name": "BRONZE",
+    "snowflake.role.name": "${SNOWFLAKE_ROLE}",
+
+    "snowflake.ingestion.method": "SNOWPIPE",
+    "snowflake.schema.registry.url": "http://schema-registry:8081",
+
+    "buffer.count.records": "1000",
+    "buffer.flush.time": "60",
+    "buffer.size.bytes": "5000000",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

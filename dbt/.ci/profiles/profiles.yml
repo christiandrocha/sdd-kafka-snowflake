@@ -1,0 +1,12 @@
+sdd_kafka_snowflake:
+  target: ci
+  outputs:
+    ci:
+      type: snowflake
+      account: ci-dummy
+      user: ci-dummy
+      password: ci-dummy
+      database: CDC_POC
+      warehouse: CDC_WH
+      schema: SILVER
+      threads: 1

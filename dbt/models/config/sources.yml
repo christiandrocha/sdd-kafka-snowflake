@@ -1,0 +1,170 @@
+version: 2
+
+sources:
+  - name: bronze_raw
+    database: CDC_POC
+    schema: BRONZE
+    description: >
+      Raw Snowpipe table. One row per Kafka event (VARIANT columns).
+      Populated continuously by Kafka Connect Snowflake Sink via Snowpipe.
+      Source: PostgreSQL payment_events table via Debezium CDC.
+    freshness:
+      warn_after:  {count: 5,  period: minute}
+      error_after: {count: 15, period: minute}
+    loaded_at_field: "RECORD_METADATA:CreateTime::TIMESTAMP_NTZ"
+    tables:
+      - name: PAYMENT_EVENTS
+        description: >
+          Raw CDC events from pg.public.payment_events.
+          Contains nested event JSONB with event_name and timestamp.
+          Timestamp may arrive as INTEGER or FLOAT (scientific notation) —
+          normalized in bronze_payment_events model.
+
+      - name: ORDERS
+        description: >
+          Raw CDC events from pg.public.orders.
+          Hub table — links all domains via CPF (user), CNPJ (restaurant),
+          driver_id, payment UUID, rating UUID.
+
+      - name: PAYMENTS
+        description: >
+          Raw CDC events from pg.public.payments.
+          Full payment entity: amounts, card info, provider, status, timestamps.
+
+      - name: ORDER_ITEMS
+        description: >
+          Raw CDC events from pg.public.order_items.
+          Largest table (110,001 records, 85% of total volume).
+          Ingested via separate Snowflake Sink connector (5000 records / 120s buffer).
+
+      - name: GPS_EVENTS
+        description: >
+          Raw CDC events from pg.public.gps_events.
+          GPS telemetry: lat/lon/altitude/speed/direction per delivery ping.
+
+      - name: ROUTES
+        description: >
+          Raw CDC events from pg.public.routes.
+          Delivery route records with start/end coordinates and distance.
+
+      - name: DRIVER_SHIFTS
+        description: >
+          Raw CDC events from pg.public.driver_shifts.
+          Shift-level driver activity: earnings, distance, orders, shift rating.
+
+      - name: ORDER_STATUS
+        description: >
+          Raw CDC events from pg.public.order_status.
+          INTEGER PK (status_id). Nested status JSONB expanded in bronze model.
+          status.timestamp may be float scientific notation — normalized via ADR-13.
+
+      - name: RECEIPTS
+        description: >
+          Raw CDC events from pg.public.receipts.
+          No dt_current_timestamp — receipt_generated_at is the domain timestamp.
+
+      - name: SEARCH_EVENTS
+        description: >
+          Raw CDC events from pg.public.search_events (kafka_search topic).
+          No dt_current_timestamp — search_timestamp is domain event time.
+
+      - name: RECOMMENDATIONS
+        description: >
+          Raw CDC events from pg.public.recommendations (mongodb_recommendations).
+          ML recommendation events: view, click, purchase, dismiss.
+
+      - name: SUPPORT_TICKETS
+        description: >
+          Raw CDC events from pg.public.support_tickets (mongodb_support).
+          Customer support tickets: category, description, status.
+
+      - name: INVENTORY
+        description: >
+          Raw CDC events from pg.public.inventory (postgres_inventory).
+          Restaurant stock levels. No dt_current_timestamp — last_updated is domain time.
+
+      - name: USERS_MONGO
+        description: >
+          Raw CDC events from pg.public.users_mongo (mongodb_users).
+          Contact info: email, phone, city, delivery_address. CPF is business key.
+
+      - name: USERS_MSSQL
+        description: >
+          Raw CDC events from pg.public.users_mssql (mssql_users).
+          Extended profile: first/last name, birthday, job. CPF is business key.
+
+      - name: RESTAURANTS
+        description: >
+          Raw CDC events from pg.public.restaurants (mysql_restaurants).
+          CNPJ is the business key referenced by orders.restaurant_key.
+
+      - name: DRIVERS
+        description: >
+          Raw CDC events from pg.public.drivers (postgres_drivers).
+          driver_id (string) referenced by orders.driver_key and driver_shifts.
+
+      - name: PRODUCTS
+        description: >
+          Raw CDC events from pg.public.products (mysql_products).
+          PK is product_id VARCHAR (not UUID). Nutrition, pricing, categorization.
+
+      - name: MENU_SECTIONS
+        description: >
+          Raw CDC events from pg.public.menu_sections (mysql_menu).
+          Groups products within a restaurant's menu.
+
+      - name: RATINGS
+        description: >
+          Raw CDC events from pg.public.ratings (mysql_ratings).
+          rating_id is PK; uuid is the FK referenced by orders.rating_key.
+
+  - name: config
+    database: CDC_POC
+    schema: CONFIG
+    description: >
+      Operational metadata managed by sync_metadata.py and Dagster.
+      Never written to by dbt models.
+    tables:
+      - name: TABLE_METADATA
+        description: >
+          CDC strategy config per table. Source of truth is Schema Registry,
+          synced by sync_metadata.py triggered by Dagster registry_sensor.
+        columns:
+          - name: table_name
+            tests: [unique, not_null]
+          - name: cdc_strategy
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['upsert', 'append', 'log']
+          - name: table_type
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['entity', 'fact', 'log']
+          - name: active
+            tests: [not_null]
+
+      - name: PROCESSING_LOG
+        description: Execution log per dbt model per run. Populated by Dagster.
+        freshness:
+          warn_after:  {count: 30, period: minute}
+          error_after: {count: 60, period: minute}
+        loaded_at_field: logged_at
+        columns:
+          - name: log_id
+            tests: [unique, not_null]
+          - name: status
+            tests:
+              - accepted_values:
+                  values: ['success', 'error', 'skipped']
+
+      - name: METADATA_HISTORY
+        description: Audit trail of every change to TABLE_METADATA.
+        columns:
+          - name: history_id
+            tests: [unique, not_null]
+          - name: change_type
+            tests:
+              - accepted_values:
+                  values: ['insert', 'update', 'deactivate']

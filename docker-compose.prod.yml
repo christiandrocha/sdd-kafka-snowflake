@@ -1,0 +1,36 @@
+# docker-compose.prod.yml — REFERENCE ONLY
+# Documents the intended production topology.
+# In production:
+#   - Kafka → Confluent Cloud or AWS MSK (remove zookeeper, kafka services)
+#   - Schema Registry → Confluent Cloud (remove schema-registry service)
+#   - Prometheus + Grafana → managed (Grafana Cloud, etc.)
+#   - All services: restart: always, no exposed ports, secrets via vault
+
+version: "3.8"
+
+services:
+  postgres:
+    restart: always
+    # No ports exposed — accessed via internal network only
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  kafka-connect:
+    restart: always
+    environment:
+      BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      # Replace localhost bootstrap with Confluent Cloud or MSK endpoint
+
+  dagster:
+    restart: always
+    environment:
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      DBT_TARGET: prod
+
+  dagster-daemon:
+    restart: always
+    environment:
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      DBT_TARGET: prod

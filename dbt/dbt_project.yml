@@ -1,0 +1,34 @@
+name: sdd_kafka_snowflake
+version: '2.1.0'
+config-version: 2
+profile: sdd_kafka_snowflake
+
+model-paths:  ["models"]
+test-paths:   ["tests"]
+macro-paths:  ["macros"]
+target-path:  "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  sdd_kafka_snowflake:
+    bronze:
+      +materialized: incremental
+      +schema: BRONZE
+      +incremental_strategy: merge
+      +on_schema_change: sync_all_columns
+      +tags: ["bronze", "cdc"]
+    silver:
+      +materialized: incremental
+      +schema: SILVER
+      +incremental_strategy: merge
+      +on_schema_change: sync_all_columns
+      +tags: ["silver", "cdc"]
+    gold:
+      +materialized: incremental
+      +schema: GOLD
+      +incremental_strategy: merge
+      +on_schema_change: sync_all_columns
+      +tags: ["gold", "analytics"]
+    config:
+      +materialized: ephemeral
+      +tags: ["config"]

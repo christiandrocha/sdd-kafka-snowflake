@@ -1,0 +1,56 @@
+# docker-compose.override.yml — local development only
+# Loaded automatically alongside docker-compose.yml by Docker Compose.
+# Adds exposed ports and volume mounts for local development.
+# NOT used in production.
+
+# version: "3.8"
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  kafka:
+    ports:
+      - "9092:9092"
+
+  schema-registry:
+    ports:
+      - "8081:8081"
+
+  kafka-connect:
+    ports:
+      - "8083:8083"
+
+  kafka-ui:
+    ports:
+      - "8080:8080"
+
+  dagster:
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dbt:/opt/dagster/dbt
+      - ./dagster:/opt/dagster/app
+      - dagster_home:/opt/dagster/dagster_home
+
+  dagster-daemon:
+    volumes:
+      - ./dbt:/opt/dagster/dbt
+      - ./dagster:/opt/dagster/app
+      - dagster_home:/opt/dagster/dagster_home
+
+  jmx-exporter:
+    ports:
+      - "5556:5556"
+
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3001:3000"
+
+volumes:
+  dagster_home:
