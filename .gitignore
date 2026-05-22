@@ -1,1 +1,42 @@
-# Cole o conteúdo acima aqui ou abra com nano/cursor
+# Credentials — never commit
+.env
+.env.*
+!.env.example
+
+# Docker & Infra artifacts
+data/
+volumes/
+tmp/
+*.log
+
+# dbt build artifacts
+infra/dbt/target/
+infra/dbt/dbt_packages/
+infra/dbt/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Dagster
+infra/dagster/dagster_home/
+
+# Security & Secrets
+.secrets.baseline
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
