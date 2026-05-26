@@ -387,8 +387,8 @@ GROUP BY WAREHOUSE_NAME ORDER BY creditos DESC;
 | Bronze como `view` — zero storage | ✅ Implementado |
 | `cluster_by=['order_date']` nas tabelas Gold | ✅ Implementado |
 | Snowpipe Streaming (0,0037 créditos/GB desde dez/2025) | ✅ Ativo |
-| Resource Monitor com teto mensal | 💡 Recomendado antes de produção |
-| Time Travel raw: 90d → 1d (Kafka tem replay de 7 dias) | 💡 Recomendado |
+| Resource Monitor com teto mensal | ✅ Implementado |
+| Time Travel raw: 90d → 1d (Kafka tem replay de 7 dias) | ✅ Implementado |
 
 Para adicionar o Resource Monitor:
 ```sql
