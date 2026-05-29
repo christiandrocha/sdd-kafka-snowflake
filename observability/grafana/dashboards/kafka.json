@@ -16,7 +16,7 @@
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
       "targets": [
         {
-          "expr": "kafka_consumer_group_lag",
+          "expr": "kafka_consumergroup_lag",
           "legendFormat": "{{topic}} / {{partition}}",
           "refId": "A"
         }
@@ -41,7 +41,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "targets": [
         {
-          "expr": "rate(kafka_server_brokertopicmetrics_messagesin_total[1m])",
+          "expr": "rate(kafka_server_brokertopicmetrics_messagesin[1m])",
           "legendFormat": "{{topic}}",
           "refId": "A"
         }
@@ -54,7 +54,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "targets": [
         {
-          "expr": "rate(kafka_server_brokertopicmetrics_bytesin_total[1m])",
+          "expr": "rate(kafka_server_brokertopicmetrics_bytesin[1m])",
           "legendFormat": "{{topic}}",
           "refId": "A"
         }

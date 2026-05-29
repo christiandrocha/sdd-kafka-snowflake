@@ -208,6 +208,18 @@ services:
       kafka:
         condition: service_healthy
 
+  # ── Kafka Exporter (consumer group lag via AdminClient) ──────────────────────
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    command:
+      - --kafka.server=kafka:29092
+      - --web.listen-address=:9308
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── Prometheus ────────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.49.0
@@ -223,6 +235,7 @@ services:
       - '--web.enable-lifecycle'
     depends_on:
       - jmx-exporter
+      - kafka-exporter
       - kafka-connect
 
   # ── Grafana ───────────────────────────────────────────────────────────────────
