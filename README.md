@@ -1,469 +1,353 @@
-# ai-kafka-microbatch
+# sdd-kafka-snowflake
 
-> Pipeline de streaming de dados em tempo real — PostgreSQL → Debezium → Kafka → Snowflake, com transformações via dbt Core (Bronze / Silver / Gold), orquestração via Dagster e observabilidade completa com Prometheus e Grafana.
+> **Real-time CDC pipeline** — PostgreSQL → Debezium → Kafka → Snowflake, with Medallion Architecture (Bronze / Silver / Gold) via dbt Core, orchestrated by Dagster, and full observability with Prometheus + Grafana.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue?style=flat-square)
-![Python](https://img.shields.io/badge/Python-81.3%25-3776AB?style=flat-square&logo=python&logoColor=white)
-![Shell](https://img.shields.io/badge/Shell-16.6%25-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
-![Kafka](https://img.shields.io/badge/Apache_Kafka-Confluent_7.5-231F20?style=flat-square&logo=apache-kafka&logoColor=white)
-![Snowflake](https://img.shields.io/badge/Snowflake-Enterprise-29B5E8?style=flat-square&logo=snowflake&logoColor=white)
-![dbt](https://img.shields.io/badge/dbt-Core-FF694B?style=flat-square&logo=dbt&logoColor=white)
-![Dagster](https://img.shields.io/badge/Dagster-Orchestrator-7C3AED?style=flat-square)
+<p align="left">
+  <img src="https://img.shields.io/badge/version-4.0.0-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Apache_Kafka-Confluent_7.5-231F20?style=flat-square&logo=apache-kafka&logoColor=white" />
+  <img src="https://img.shields.io/badge/Snowflake-Enterprise-29B5E8?style=flat-square&logo=snowflake&logoColor=white" />
+  <img src="https://img.shields.io/badge/dbt_Core-1.7-FF694B?style=flat-square&logo=dbt&logoColor=white" />
+  <img src="https://img.shields.io/badge/Dagster-1.6-7C3AED?style=flat-square" />
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/Prometheus_%2B_Grafana-observability-E6522C?style=flat-square&logo=prometheus&logoColor=white" />
+</p>
 
 ---
 
-## Visão geral
-
-Este projeto implementa um pipeline completo de **Streaming Data Delivery** usando Change Data Capture (CDC) para capturar mudanças em tempo real de um banco PostgreSQL e entregá-las ao Snowflake, onde são transformadas em modelos analíticos via dbt.
+## Architecture
 
 ```
-PostgreSQL (WAL lógico + REPLICA IDENTITY FULL)
-    └─► Debezium Source Connector (CDC via pgoutput)
-            └─► Apache Kafka — tópico: pocdb.public.<tabela>
-                    └─► Snowflake Sink Connector (Snowpipe Streaming)
-                                └─► CDC_POC.PUBLIC — RECORD_CONTENT VARIANT
-                                        └─► dbt Bronze — views (extração JSON)
-                                                └─► dbt Silver — incremental MERGE (CDC UPSERT)
-                                                        └─► dbt Gold — tables (modelos para BI)
-```
-
-**Exemplo de ponta a ponta:** um `UPDATE orders SET status='shipped' WHERE id=42` no PostgreSQL percorre todo o pipeline e aparece como `gross_revenue = 179.80` na tabela `fact_orders` do Snowflake em menos de 60 segundos.
-
----
-
-## Stack
-
-| Camada | Tecnologia | Versão | Função |
-|---|---|---|---|
-| Fonte | PostgreSQL | 15 | Banco operacional com WAL lógico para CDC |
-| CDC | Debezium | 2.4 | Lê o WAL via slot de replicação `pgoutput` |
-| Broker | Apache Kafka | Confluent 7.5.0 | Armazena eventos com retenção de 7 dias |
-| Schema | Confluent Schema Registry | 7.5.0 | Registra schemas Avro (compatibilidade BACKWARD) |
-| Integração | Kafka Connect | Debezium + Snowflake Sink 2.1.2 | Ponte PostgreSQL → Kafka → Snowflake |
-| Auth Connector | Bouncy Castle (bc-fips + bcpkix-fips) | 1.0.2.4 / 1.0.7 | Suporte a RSA Key Pair PKCS8 na JVM |
-| Destino | Snowflake Enterprise | — | Data warehouse com Snowpipe Streaming |
-| Transformação | dbt Core | 1.x | Medallion Architecture: Bronze / Silver / Gold |
-| Orquestração | Dagster | Latest | Jobs dbt com lineage, sensores e schedules |
-| Monitoramento | Prometheus + Grafana | 2.49 / 10.2 | Métricas JMX do Kafka + dashboards provisionados |
-| UI Kafka | Kafka UI (Provectus) | Latest | Inspeciona tópicos, offsets e connectors |
-
----
-
-## Serviços Docker
-
-O projeto sobe **11 serviços** via `docker-compose.yml`. Portas são expostas apenas em desenvolvimento através do `docker-compose.override.yml` (carregado automaticamente pelo Docker Compose).
-
-| Serviço | Imagem | Porta (dev) | Healthcheck |
-|---|---|---|---|
-| `zookeeper` | confluentinc/cp-zookeeper:7.5.0 | 2181 | `nc -z localhost 2181` |
-| `kafka` | confluentinc/cp-kafka:7.5.0 | 9092 | `kafka-broker-api-versions` |
-| `schema-registry` | confluentinc/cp-schema-registry:7.5.0 | 8081 | `curl /subjects` |
-| `postgres` | postgres:15 | 5432 | `pg_isready` |
-| `kafka-connect` | build: `Dockerfile.connect` | 8083 | `curl /connectors` |
-| `dagster` | build: `dagster/Dockerfile` | 3000 | `curl /server_info` |
-| `dagster-daemon` | build: `dagster/Dockerfile` | — | restart: unless-stopped |
-| `kafka-ui` | provectuslabs/kafka-ui:latest | 8080 | — |
-| `jmx-exporter` | bitnami/jmx-exporter:latest | 5556 | — |
-| `prometheus` | prom/prometheus:v2.49.0 | 9090 | — |
-| `grafana` | grafana/grafana:10.2.0 | 3001 | — |
-
-> Todos os serviços dependem de healthchecks em cascata — o Kafka Connect só sobe após Kafka, PostgreSQL e Schema Registry estarem saudáveis.
-
----
-
-## Estrutura do repositório
-
-```
-sdd-kafka-snowflake/
-├── connectors/
-│   ├── debezium-source.json        # Debezium PostgreSQL Source (CDC → Kafka)
-│   └── snowflake-sink.json         # Snowflake Sink (Kafka → Snowflake Streaming)
-│
-├── dbt/
-│   ├── models/
-│   │   ├── bronze/                 # Views — extração do VARIANT sem transformação
-│   │   │   ├── stg_orders.sql
-│   │   │   ├── stg_customers.sql
-│   │   │   └── stg_products.sql
-│   │   ├── silver/                 # Incrementais — dedup por LSN, MERGE CDC, soft-delete
-│   │   │   ├── int_orders.sql
-│   │   │   ├── int_customers.sql
-│   │   │   └── int_products.sql
-│   │   └── gold/                   # Tables físicas com métricas calculadas para BI
-│   │       ├── fact_orders.sql
-│   │       ├── dim_customers.sql
-│   │       └── dim_products.sql
-│   ├── macros/
-│   │   └── parse_cdc_record.sql    # Macro reutilizável para extração de campos CDC
-│   ├── tests/
-│   │   └── assert_no_negative_price.sql
-│   ├── dbt_project.yml             # Config central: materializações por camada + tags
-│   ├── profiles.yml                # Conexão Snowflake: targets dev e prod
-│   └── sources.yml                 # Tabelas raw + freshness checks (warn: 5min, error: 30min)
-│
-├── dagster/
-│   ├── Dockerfile                  # Imagem customizada do Dagster com dbt integrado
-│   └── workspace.yaml              # Definição dos assets e jobs
-│
-├── observability/
-│   ├── jmx/
-│   │   └── kafka-jmx-exporter.yml  # Config do JMX Exporter para métricas do Kafka
-│   ├── prometheus/
-│   │   ├── prometheus.yml          # Scrape configs
-│   │   └── alert_rules.yml         # Regras de alerta
-│   └── grafana/
-│       ├── provisioning/           # Datasources e dashboards auto-provisionados
-│       └── dashboards/
-│
-├── scripts/
-│   ├── init.sql                    # Cria tabelas no PostgreSQL + REPLICA IDENTITY FULL
-│   ├── snowflake_setup.sql         # Roles, warehouse, database e GRANTs no Snowflake
-│   ├── register_connectors.sh      # Registra connectors via REST API do Kafka Connect
-│   └── generate_keys.sh            # Gera par RSA (PKCS8) para Key Pair Auth
-│
-├── tests/                          # Testes de integração do pipeline
-│
-├── Dockerfile.connect              # debezium/connect:2.4 + Snowflake JAR + Bouncy Castle
-├── docker-compose.yml              # Infraestrutura base (dev + prod)
-├── docker-compose.override.yml     # Portas expostas e volumes — dev only (auto-loaded)
-├── docker-compose.prod.yml         # Referência de topologia para produção
-├── .env.example                    # Template de variáveis (seguro para commitar)
-└── .gitignore
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SOURCE LAYER                                         │
+│   PostgreSQL 15 (WAL logical replication · REPLICA IDENTITY FULL)            │
+│   20 tables · 4 simulated sources (Kafka, MongoDB, MySQL, PostgreSQL/MSSQL) │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ pgoutput slot (debezium_slot)
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         STREAMING LAYER                                      │
+│   Debezium 2.4  ──►  Apache Kafka (Confluent 7.5)  ──►  Schema Registry    │
+│   20 CDC topics · Avro serialization · BACKWARD compatibility               │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ Kafka Connect Snowflake Sink
+                               │ 2 connectors: sink (19 topics) · sinkitems (order_items)
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         INGESTION LAYER — BRONZE (Snowflake)                 │
+│   Snowpipe · 20 raw tables (RECORD_CONTENT VARIANT + RECORD_METADATA)       │
+│   20 stages · 20 pipes · RSA Key Pair authentication                        │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ dbt Core 1.7 — incremental MERGE
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  TRANSFORMATION LAYER — dbt Medallion Architecture           │
+│                                                                              │
+│  Bronze (20 models)    Silver (9 models)        Gold (6 models)             │
+│  ─────────────────     ─────────────────        ──────────────              │
+│  Flatten VARIANT       Deduplicate by PK         Cross-domain analytics     │
+│  Cast + normalize      Enrich via joins          Aggregations for BI        │
+│  PARSE_JSON JSONB      CDC upsert / merge        Engagement tiers           │
+│  Filter op != 'd'      CPF/CNPJ business keys    Revenue · Funnel · KPIs   │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ Dagster 1.6 — sensor-driven orchestration
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      ORCHESTRATION + OBSERVABILITY                           │
+│   Dagster · bronze_new_data_sensor (60s) · CONFIG.PROCESSING_LOG            │
+│   Prometheus 2.49 · JMX Exporter · Grafana 10.2 (3 dashboards)             │
+│   Kafka UI · Schema Registry UI · dbt lineage graph                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Pré-requisitos
+## Pipeline at a Glance
 
-- Docker Desktop 4.x+ com **mínimo 8 GB de RAM** alocados
+| Metric | Value |
+|--------|-------|
+| Source domains | 20 tables across 4 systems |
+| Total records | 129,353 |
+| Largest table | `order_items` — 110,001 rows (85% of volume) |
+| dbt models | 35 (20 Bronze · 9 Silver · 6 Gold) |
+| End-to-end latency | < 60 seconds (PostgreSQL → Snowflake Gold) |
+| CDC events captured | INSERT · UPDATE · DELETE (Debezium op flags) |
+| Schema compatibility | BACKWARD enforced via Schema Registry |
+| Snowflake objects | 20 raw tables · 20 stages · 20 pipes |
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Version | Role |
+|-------|-----------|---------|------|
+| Source DB | PostgreSQL | 15 | WAL logical replication, CDC source |
+| CDC | Debezium | 2.4 | Reads WAL via `pgoutput` slot |
+| Broker | Apache Kafka | Confluent 7.5 | Event streaming, 7-day retention |
+| Schema | Confluent Schema Registry | 7.5 | Avro schema governance (BACKWARD) |
+| Sink | Kafka Connect Snowflake Sink | 2.x | Snowpipe ingestion into VARIANT tables |
+| Data Warehouse | Snowflake Enterprise | — | Snowpipe · Time Travel · Resource Monitor |
+| Transformation | dbt Core | 1.7 | Medallion Architecture, incremental MERGE |
+| Orchestration | Dagster | 1.6 | Sensor-driven dbt execution, lineage graph |
+| Observability | Prometheus + Grafana | 2.49 / 10.2 | JMX metrics, consumer lag, dashboards |
+| Containerization | Docker Compose | v2 | 11 services, health-checked startup chain |
+
+---
+
+## Domain Model (20 Tables)
+
+| Type | Table | Simulated Source | PK | Records |
+|------|-------|-----------------|-----|---------|
+| event | payment_events | Kafka | event_id | 2,208 |
+| event | gps_events | Kafka | gps_id | 7,350 |
+| event | order_status | Kafka | status_id | 4,176 |
+| event | search_events | Kafka | search_id | 202 |
+| event | recommendations | MongoDB | event_id | 254 |
+| fact | order_items | MongoDB | order_item_id | 110,001 |
+| entity | orders | Kafka | order_id | 405 |
+| entity | payments | Kafka | payment_id | 260 |
+| entity | routes | Kafka | route_id | 410 |
+| entity | receipts | Kafka | receipt_id | 377 |
+| entity | driver_shifts | Kafka | shift_id | 468 |
+| entity | support_tickets | MongoDB | ticket_id | 410 |
+| entity | users_mongo | MongoDB | uuid | 411 |
+| entity | users_mssql | MSSQL | uuid | 288 |
+| entity | restaurants | MySQL | uuid | 461 |
+| entity | drivers | PostgreSQL | uuid | 354 |
+| entity | products | MySQL | product_id | 368 |
+| entity | menu_sections | MySQL | menu_section_id | 362 |
+| entity | ratings | MySQL | rating_id | 327 |
+| entity | inventory | PostgreSQL | stock_id | 261 |
+
+---
+
+## dbt Medallion Architecture
+
+```
+BRONZE (20 models)                  SILVER (9 models)              GOLD (6 models)
+──────────────────                  ─────────────────              ──────────────
+bronze_orders          ──────────►  silver_orders         ──────►  gold_revenue_per_restaurant
+bronze_restaurants                  silver_users          ──────►  gold_user_behavior
+bronze_drivers         ──────────►  silver_drivers        ──►
+bronze_driver_shifts   ──────────►  silver_driver_shifts  ──────►  gold_driver_performance
+bronze_payment_events  ──────────►  silver_payment_events_history ► gold_payment_funnel
+                                                          ──────►  gold_payment_lifecycle
+                                    silver_payment_current_state ►  gold_payments_by_status
+bronze_order_items     ──────────►  silver_order_items    ──────►  gold_revenue_per_restaurant
+bronze_search_events   ──────────►  silver_search_events  ──────►  gold_user_behavior
+bronze_recommendations ──────────►  silver_recommendations ─────►  gold_user_behavior
+```
+
+**Key transformation decisions:**
+- JSONB fields (`event`, `status`) arrive as escaped strings via Debezium/Avro → `PARSE_JSON()` required before path traversal
+- `silver_users` unifies `users_mongo` + `users_mssql` via FULL OUTER JOIN on CPF (11-digit Brazilian tax ID)
+- Timestamp normalization: `CAST(::FLOAT AS BIGINT)` handles both `INTEGER` and `FLOAT` scientific notation formats
+- All models use `incremental_strategy = 'merge'` for idempotent Snowpipe retries
+
+---
+
+## Services
+
+| Service | Image | Port (dev) | Purpose |
+|---------|-------|-----------|---------|
+| `postgres` | postgres:15 | 5432 | Source database with WAL replication |
+| `zookeeper` | confluentinc/cp-zookeeper:7.5.0 | 2181 | Kafka coordination |
+| `kafka` | confluentinc/cp-kafka:7.5.0 | 9092 | Event broker |
+| `schema-registry` | confluentinc/cp-schema-registry:7.5.0 | 8081 | Avro schema governance |
+| `kafka-connect` | custom (Debezium + Snowflake Sink) | 8083 | CDC + sink connectors |
+| `dagster` | custom (dbt + Dagster) | 3000 | Orchestration webserver |
+| `dagster-daemon` | custom | — | Sensor + run executor |
+| `kafka-ui` | provectuslabs/kafka-ui | 8080 | Topic / connector inspection |
+| `jmx-exporter` | bitnami/jmx-exporter | 5556 | Kafka JMX metrics |
+| `prometheus` | prom/prometheus:v2.49.0 | 9090 | Metrics scraping |
+| `grafana` | grafana/grafana:10.2.0 | 3001 | Dashboards (admin/admin) |
+
+> All services start in health-checked dependency order — Kafka Connect only starts after Kafka, PostgreSQL, and Schema Registry pass their healthchecks.
+
+---
+
+## Prerequisites
+
+- Docker Desktop 4.x+ with **at least 8 GB RAM** allocated
 - Docker Compose v2
-- Conta **Snowflake Enterprise Edition** (Snowpipe Streaming requer Enterprise)
-- `jq` instalado localmente
-- `openssl` instalado localmente
+- **Snowflake Enterprise Edition** account (Snowpipe requires Enterprise)
+- `openssl` installed locally
 
 ---
 
-## Setup completo
+## Quick Start
 
-### 1. Clonar o repositório
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/christiandrocha/sdd-kafka-snowflake.git
-cd sdd-kafka-snowflake
+cd sdd-kafka-snowflake/infra
 ```
 
-### 2. Gerar chaves RSA para autenticação no Snowflake
+### 2. Generate RSA keys for Snowflake authentication
 
 ```bash
 bash scripts/generate_keys.sh
 ```
 
-Gera três arquivos (todos gitignored):
-
-| Arquivo | Uso |
-|---|---|
-| `snowflake_rsa_key.pem` | Chave privada PKCS1 — base para derivação |
-| `snowflake_rsa_key.pub` | Chave pública — vai no `ALTER USER` do Snowflake |
-| `snowflake_rsa_key_pkcs8.pem` | Chave privada **PKCS8** — usada pelo connector e pelo dbt |
-
-> ⚠️ O connector exige PKCS8 obrigatoriamente. O Bouncy Castle no `Dockerfile.connect` foi incluído especificamente para suportar esse formato na JVM.
-
-### 3. Configurar o Snowflake
-
-Execute `scripts/snowflake_setup.sql` como `ACCOUNTADMIN` (via Snowsight ou SnowSQL):
-
-```bash
-snowsql -a <sua-conta> -u <seu-admin> -f scripts/snowflake_setup.sql
-```
-
-O script cria os seguintes objetos:
-
+Register the public key in Snowflake:
 ```sql
-ROLE      CDC_ROLE              -- acesso mínimo ao pipeline
-USER      KAFKA_CONNECTOR_USER  -- autenticação RSA Key Pair
-WAREHOUSE CDC_WH                -- XSMALL, AUTO_SUSPEND=60, AUTO_RESUME=TRUE
-DATABASE  CDC_POC
-SCHEMA    CDC_POC.PUBLIC        -- raw (Sink Connector)
-SCHEMA    CDC_POC.BRONZE        -- criado pelo dbt
-SCHEMA    CDC_POC.SILVER        -- criado pelo dbt
-SCHEMA    CDC_POC.GOLD          -- criado pelo dbt
--- GRANT ON FUTURE TABLES garante permissões automáticas em tabelas novas
+ALTER USER <your_user> SET RSA_PUBLIC_KEY='<contents of snowflake_key_pub.pem>';
 ```
 
-Cole o conteúdo de `snowflake_rsa_key.pub` no comando:
-```sql
-ALTER USER KAFKA_CONNECTOR_USER SET RSA_PUBLIC_KEY = '<conteúdo do .pub>';
-```
+### 3. Configure Snowflake
 
-### 4. Configurar variáveis de ambiente
+Run `scripts/snowflake_setup.sql` as `ACCOUNTADMIN` in Snowsight to create:
+- `CDC_ROLE` with least-privilege grants
+- `CDC_WH` warehouse (XSMALL, AUTO_SUSPEND=60)
+- `CDC_POC` database with BRONZE / SILVER / GOLD / CONFIG schemas
+- Resource Monitor (20 credits/month cap)
+- Time Travel: 1 day for Bronze, 7 days for Silver/Gold
+
+### 4. Set environment variables
 
 ```bash
 cp .env.example .env
+# Fill in SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH, etc.
 ```
 
-Edite o `.env` com os valores reais:
-
-```bash
-# PostgreSQL
-POSTGRES_USER=poc_user
-POSTGRES_PASSWORD=poc_pass123
-POSTGRES_DB=pocdb
-DATABASE_URL=postgresql://poc_user:poc_pass123@localhost:5432/pocdb
-
-# Snowflake
-SNOWFLAKE_URL=<conta>.snowflakecomputing.com
-SNOWFLAKE_ACCOUNT=<conta>
-SNOWFLAKE_USER=KAFKA_CONNECTOR_USER
-SNOWFLAKE_PRIVATE_KEY=<conteúdo da chave PKCS8 em uma linha>
-SNOWFLAKE_PRIVATE_KEY_PATH=/secrets/snowflake_private_key.pem
-SNOWFLAKE_DATABASE=CDC_POC
-SNOWFLAKE_WAREHOUSE=CDC_WH
-SNOWFLAKE_ROLE=CDC_ROLE
-
-# Schema Registry
-SCHEMA_REGISTRY_URL=http://schema-registry:8081
-
-# dbt
-DBT_TARGET=dev
-```
-
-### 5. Subir a infraestrutura
+### 5. Start all services
 
 ```bash
 docker compose up -d
+docker compose logs -f kafka-connect  # wait for "Kafka Connect started"
 ```
 
-O `docker-compose.override.yml` é carregado **automaticamente** junto com o `docker-compose.yml`, expondo todas as portas para acesso local. O `init.sql` é executado automaticamente na primeira subida do PostgreSQL, criando as tabelas com `REPLICA IDENTITY FULL` e a publicação `dbz_publication`.
-
-Acompanhe a inicialização:
-
-```bash
-docker compose ps        # verifica o estado de cada serviço
-docker compose logs -f kafka-connect  # aguarda "Kafka Connect started"
-```
-
-### 6. Registrar os connectors
+### 6. Register CDC connectors
 
 ```bash
 bash scripts/register_connectors.sh
 ```
 
-O script aguarda o Kafka Connect estar saudável e registra:
+Registers three connectors:
+- **`debezium-postgres-cdc`** — reads PostgreSQL WAL via `pgoutput`
+- **`sink`** — delivers 19 topics to Snowflake via Snowpipe
+- **`sinkitems`** — dedicated connector for `order_items` (110k records, larger buffer)
 
-- **`postgres-cdc-source`** — Debezium lendo o WAL via slot `debezium_slot`
-- **`snowflake-sink`** — entregando eventos ao Snowflake via Snowpipe Streaming
-
-Verifique o status:
-
-```bash
-curl -s http://localhost:8083/connectors?expand=status | jq \
-  '.[] | {name: .status.name, state: .status.connector.state}'
-```
-
-O pipeline está ativo quando ambos mostrarem `"state": "RUNNING"`.
-
----
-
-## Ambientes: dev vs. produção
-
-O projeto separa configurações de ambiente em três arquivos:
-
-| Arquivo | Quando é usado | O que contém |
-|---|---|---|
-| `docker-compose.yml` | sempre | Definição base de todos os serviços, sem portas |
-| `docker-compose.override.yml` | **automático em dev** | Portas expostas + volumes de hot-reload |
-| `docker-compose.prod.yml` | produção (manual) | Referência de topologia: Kafka gerenciado, restart:always, sem portas |
+### 7. Load test data and run dbt
 
 ```bash
-# Desenvolvimento (padrão — override é automático)
-docker compose up -d
+# Load all 20 domains into PostgreSQL (CDC triggers automatically)
+python3 tests/load_to_postgres.py --data-dir tests/data/ --batch all \
+  --db-url $DATABASE_URL
 
-# Produção
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Once Bronze tables are populated, run dbt
+docker exec dagster-webserver bash -c \
+  "cd /opt/dagster/dbt && dbt run --select bronze silver gold \
+   --profiles-dir /opt/dagster/dbt"
 ```
 
-Em produção, o `docker-compose.prod.yml` documenta:
-- **Kafka / Schema Registry** → substituir por Confluent Cloud ou AWS MSK
-- **Prometheus / Grafana** → substituir por Grafana Cloud ou solução gerenciada
-- **`DBT_TARGET: prod`** → aponta para warehouse e threads maiores
+Or let Dagster's `bronze_new_data_sensor` trigger the pipeline automatically (polls every 60s).
 
 ---
 
-## Modelos dbt
+## Key Design Decisions
 
-### Medallion Architecture
+| Decision | Rationale |
+|----------|-----------|
+| Unified PostgreSQL source (ADR-04) | All 4 simulated sources (Kafka, MongoDB, MySQL, MSSQL) are consolidated into PostgreSQL, enabling a single Debezium connector for 20 tables |
+| Snowpipe via Kafka Connect (not Snowpipe REST) | Preserves Kafka as the system of record; connector manages staging files, pipes, and offset commits automatically |
+| `generate_schema_name` macro | Overrides dbt's default `<target_schema>_<custom_schema>` naming to write directly to BRONZE / SILVER / GOLD |
+| `PARSE_JSON()` for JSONB fields | PostgreSQL JSONB columns arrive as escaped JSON strings via Debezium/Avro — direct path traversal returns NULL |
+| `unique_key` per model from TABLE_METADATA | CDC strategy and PK are driven by `CONFIG.TABLE_METADATA`, populated by `sync_metadata.py` from Schema Registry |
+| Separate `sinkitems` connector | `order_items` (110k rows) uses a dedicated connector with 5000-record / 120s buffer to avoid blocking other topics |
+| RSA Key Pair auth (no passwords) | Private key stored in container volume; never in environment variables or config files |
 
-| Camada | Materialização | Schema Snowflake | Descrição |
-|---|---|---|---|
-| **Bronze** | `view` | `CDC_POC.BRONZE` | Extrai campos do `RECORD_CONTENT VARIANT` via notação `:`. Zero storage. |
-| **Silver** | `incremental` (merge) | `CDC_POC.SILVER` | Filtra por `pg_lsn`, deduplica com `ROW_NUMBER()`, aplica MERGE CDC. Soft-delete via `is_deleted`. |
-| **Gold** | `table` | `CDC_POC.GOLD` | Joins entre Silver, métricas calculadas (`gross_revenue`, `discount_amount`), `cluster_by` para BI. |
+---
 
-### Execução manual via Dagster
+## Observability
 
-Acesse `http://localhost:3000` para disparar jobs, visualizar o lineage e acompanhar histórico de runs. Para execução manual via CLI:
+### Grafana Dashboards (localhost:3001)
+- **Kafka Overview** — throughput, topic lag, broker health
+- **Kafka Connect** — connector state, task errors, sink throughput
+- **Dagster Pipeline** — run history, asset materialization status
 
+### Consumer Lag Check
 ```bash
-# Rodar todas as camadas
-docker exec dagster-webserver dbt run --project-dir /opt/dagster/dbt
-
-# Rodar por camada (tags definidas no dbt_project.yml)
-docker exec dagster-webserver dbt run --select tag:bronze
-docker exec dagster-webserver dbt run --select tag:silver
-docker exec dagster-webserver dbt run --select tag:gold
-
-# Testes de qualidade
-docker exec dagster-webserver dbt test
-
-# Verificar freshness das fontes (warn: 5min, error: 30min)
-docker exec dagster-webserver dbt source freshness
-
-# Full refresh — recria a tabela Silver do zero (use com cautela)
-docker exec dagster-webserver dbt run --select tag:silver --full-refresh
+docker exec kafka bash -c "
+  kafka-consumer-groups --bootstrap-server localhost:9092 \
+    --describe --group connect-sink | awk 'NR>2{sum+=\$6} END{print \"Total lag:\", sum}'"
 ```
 
----
-
-## Interfaces locais (dev)
-
-| Interface | URL | Credenciais |
-|---|---|---|
-| Kafka UI | http://localhost:8080 | — |
-| Kafka Connect REST API | http://localhost:8083 | — |
-| Schema Registry | http://localhost:8081 | — |
-| Dagster Webserver | http://localhost:3000 | — |
-| Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3001 | admin / admin |
-| PostgreSQL | localhost:5432 | ver `.env` |
-
----
-
-## Segurança
-
-- **RSA Key Pair Auth** no Snowflake — sem senhas trafegando em texto claro
-- **Bouncy Castle FIPS** (`bc-fips` + `bcpkix-fips`) no `Dockerfile.connect` — leitura de chaves PKCS8 FIPS-compliant na JVM
-- **Princípio do menor privilégio** — `CDC_ROLE` acessa somente `CDC_POC.PUBLIC`; `ANALYST_ROLE` acessa somente `GOLD`
-- **`x-snowflake-env` anchor** no `docker-compose.yml` — centraliza o `env_file: .env` para todos os serviços que precisam de credenciais
-- **Secrets via variáveis de ambiente** — `.env` no `.gitignore`; em produção usar HashiCorp Vault ou AWS Secrets Manager
-- **Override file isolado** — portas nunca são expostas no `docker-compose.yml` base; apenas no `docker-compose.override.yml` de dev
-
-> ⚠️ O `.env.example` é seguro para commitar. O `.env` real com credenciais **nunca deve ser commitado**.
-
----
-
-## Monitoramento
-
-### Kafka (Prometheus + Grafana)
-- Throughput de mensagens por tópico (`kafka-ui` em :8080)
-- Consumer lag do Snowflake Sink (métrica JMX via `jmx-exporter` em :5556)
-- Estado dos connectors via REST: `GET /connectors?expand=status`
-- Alertas configurados em `observability/prometheus/alert_rules.yml`
-- Dashboards Grafana provisionados automaticamente de `observability/grafana/provisioning/`
-
-### dbt / Dagster
-- Lineage completo em `http://localhost:3000`
-- `dbt source freshness` — alerta se nenhum dado novo chegar em 5+ minutos no raw
-
-### Snowflake (ACCOUNT_USAGE)
+### Snowflake Pipeline Health
 ```sql
--- Créditos consumidos por warehouse (últimos 30 dias)
-SELECT WAREHOUSE_NAME,
-       ROUND(SUM(CREDITS_USED), 3)       AS creditos,
-       ROUND(SUM(CREDITS_USED) * 3.0, 2) AS custo_usd_enterprise
+-- Pipe ingestion status
+SELECT SYSTEM$PIPE_STATUS('CDC_POC.BRONZE.SNOWFLAKE_KAFKA_CONNECTOR_SINK_PIPE_ORDERS_0');
+
+-- Credits consumed (last 30 days)
+SELECT WAREHOUSE_NAME, ROUND(SUM(CREDITS_USED), 3) AS credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE START_TIME >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-GROUP BY WAREHOUSE_NAME ORDER BY creditos DESC;
+GROUP BY WAREHOUSE_NAME;
+
+-- dbt execution log
+SELECT * FROM CDC_POC.CONFIG.PROCESSING_LOG ORDER BY started_at DESC LIMIT 20;
 ```
 
 ---
 
-## Otimização de custos no Snowflake
+## Repository Structure
 
-| Prática | Status |
-|---|---|
-| `AUTO_SUSPEND = 60` no `CDC_WH` | ✅ Implementado |
-| dbt Silver incremental com filtro por `pg_lsn` | ✅ Implementado |
-| Bronze como `view` — zero storage | ✅ Implementado |
-| `cluster_by=['order_date']` nas tabelas Gold | ✅ Implementado |
-| Snowpipe Streaming (0,0037 créditos/GB desde dez/2025) | ✅ Ativo |
-| Resource Monitor com teto mensal | ✅ Implementado |
-| Time Travel raw: 90d → 1d (Kafka tem replay de 7 dias) | ✅ Implementado |
-
-Para adicionar o Resource Monitor:
-```sql
-CREATE RESOURCE MONITOR cdc_poc_monitor
-  WITH CREDIT_QUOTA = 20 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
-  TRIGGERS ON 75 PERCENT DO NOTIFY
-           ON 90 PERCENT DO NOTIFY
-           ON 100 PERCENT DO SUSPEND;
-
-ALTER WAREHOUSE CDC_WH SET RESOURCE_MONITOR = cdc_poc_monitor;
+```
+infra/
+├── connectors/
+│   ├── debezium.json               # Debezium PostgreSQL Source (20 tables, pgoutput)
+│   ├── snowflake_sink.json         # Snowflake Sink "sink" (19 topics, VARIANT)
+│   └── snowflake_sink_items.json   # Snowflake Sink "sinkitems" (order_items, large buffer)
+├── dbt/
+│   ├── macros/
+│   │   ├── generate_schema_name.sql  # Writes directly to BRONZE/SILVER/GOLD
+│   │   ├── get_table_config.sql      # Reads CDC strategy from TABLE_METADATA
+│   │   └── resolve_cdc.sql           # upsert / append / log strategies
+│   ├── models/
+│   │   ├── bronze/                 # 20 models — flatten VARIANT, PARSE_JSON, dedup
+│   │   ├── silver/                 # 9 models — enrich, join, CPF/CNPJ business keys
+│   │   ├── gold/                   # 6 models — cross-domain analytics
+│   │   └── config/                 # sources.yml (20 Bronze tables + CONFIG schema)
+│   ├── dbt_project.yml
+│   └── profiles.yml                # dev + prod targets via env_var()
+├── dagster/
+│   └── pipeline/
+│       ├── assets.py               # cdc_dbt_assets + log_processing_results
+│       ├── sensors.py              # bronze_new_data_sensor + registry_new_subject_sensor
+│       ├── jobs.py                 # cdc_pipeline_job + sync_metadata_job
+│       └── resources.py            # SnowflakeResource + DbtCliResource
+├── observability/
+│   ├── prometheus/                 # prometheus.yml + alert_rules.yml
+│   └── grafana/                    # 3 provisioned dashboards
+├── scripts/
+│   ├── init.sql                    # 20 PostgreSQL tables + dbz_publication
+│   ├── snowflake_setup.sql         # Roles, warehouse, Time Travel, Resource Monitor
+│   ├── register_connectors.sh      # Registers 3 connectors via Connect REST API
+│   ├── bootstrap_metadata.sql      # Seeds CONFIG.TABLE_METADATA (20 entries)
+│   ├── sync_metadata.py            # Schema Registry → TABLE_METADATA sync
+│   └── truncate_snowflake.py       # Full pipeline reset utility
+├── tests/
+│   ├── load_to_postgres.py         # 20-domain data loader (129,353 records)
+│   └── data/                       # 100 JSON files across 20 domains
+├── docker-compose.yml              # Base services (no exposed ports)
+├── docker-compose.override.yml     # Dev: exposed ports + volume mounts
+├── Dockerfile.connect              # Debezium + Snowflake Sink + Bouncy Castle
+└── .env.example                    # All required variables (safe to commit)
 ```
 
 ---
 
-## Comandos úteis
+## Security
 
-```bash
-# Status de todos os serviços
-docker compose ps
-
-# Logs de um serviço específico
-docker compose logs -f kafka-connect
-
-# Reiniciar um connector travado
-curl -X POST http://localhost:8083/connectors/snowflake-sink/restart
-
-# Pausar o CDC para manutenção no PostgreSQL
-curl -X PUT http://localhost:8083/connectors/postgres-cdc-source/pause
-
-# Inserir dado de teste
-docker exec -it postgres \
-  psql -U poc_user -d pocdb \
-  -c "INSERT INTO orders (customer_id, product_id, quantity, status, total_price) VALUES (1, 1, 2, 'pending', 199.90);"
-
-# Parar todos os serviços
-docker compose down
-
-# Reset completo (remove volumes)
-docker compose down -v
-```
+- **RSA Key Pair authentication** — no passwords; private key mounted as container volume
+- **Bouncy Castle** (`bc-fips` + `bcpkix-fips`) in `Dockerfile.connect` — FIPS-compliant PKCS8 key handling in the JVM
+- **Least privilege** — `CDC_ROLE` scoped to `CDC_POC` only
+- **Ports never exposed in base compose** — only `docker-compose.override.yml` (dev) exposes ports
+- **`.env` gitignored** — `.env.example` is the only committed credentials file
 
 ---
 
-## Troubleshooting
+## Author
 
-**Connector em estado FAILED**
-```bash
-curl -s http://localhost:8083/connectors/postgres-cdc-source/status | jq .
-# Causa mais comum: PostgreSQL ainda inicializando ao registrar o connector.
-# Aguardar e re-executar: bash scripts/register_connectors.sh
-```
-
-**Erro JWT / autenticação Snowflake**
-- Confirmar que a chave no `.env` é PKCS8 (gerada com `-topk8` pelo `generate_keys.sh`)
-- Confirmar que a chave pública foi aplicada: `ALTER USER KAFKA_CONNECTOR_USER SET RSA_PUBLIC_KEY = '...'`
-- O Bouncy Castle no `Dockerfile.connect` é obrigatório — não substituir a imagem base sem incluí-lo
-
-**Dagster não encontra modelos dbt**
-- Verificar se os volumes `./dbt:/opt/dagster/dbt` estão montados corretamente no `docker-compose.override.yml`
-- Confirmar que `DBT_TARGET` está definido no `.env` (default: `dev`)
-
-**Mensagens Avro não aparecem no Kafka UI**
-```bash
-curl http://localhost:8081/subjects  # Schema Registry deve retornar lista de subjects
-# Se vazio: o Debezium ainda não publicou nenhuma mensagem
-```
-
----
-
-## Licença
-
-MIT — veja [LICENSE](LICENSE) para detalhes.
-
----
-
-## Autor
-
-**Christian D. Rocha** — [@christiandrocha](https://github.com/christiandrocha)
+**Christian D. Rocha** — [github.com/christiandrocha](https://github.com/christiandrocha)
