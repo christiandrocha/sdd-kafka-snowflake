@@ -1,5 +1,5 @@
 {
-  "name": "snowflake-sink",
+  "name": "sink",
   "config": {
     "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
     "tasks.max": "4",
@@ -13,12 +13,16 @@
     "snowflake.schema.name": "BRONZE",
     "snowflake.role.name": "${SNOWFLAKE_ROLE}",
 
+    "snowflake.topic2table.map": "pg.public.payment_events:PAYMENT_EVENTS,pg.public.orders:ORDERS,pg.public.payments:PAYMENTS,pg.public.gps_events:GPS_EVENTS,pg.public.order_status:ORDER_STATUS,pg.public.routes:ROUTES,pg.public.receipts:RECEIPTS,pg.public.driver_shifts:DRIVER_SHIFTS,pg.public.search_events:SEARCH_EVENTS,pg.public.recommendations:RECOMMENDATIONS,pg.public.support_tickets:SUPPORT_TICKETS,pg.public.users_mongo:USERS_MONGO,pg.public.users_mssql:USERS_MSSQL,pg.public.restaurants:RESTAURANTS,pg.public.drivers:DRIVERS,pg.public.products:PRODUCTS,pg.public.menu_sections:MENU_SECTIONS,pg.public.ratings:RATINGS,pg.public.inventory:INVENTORY",
+
     "snowflake.ingestion.method": "SNOWPIPE",
     "snowflake.schema.registry.url": "http://schema-registry:8081",
 
     "buffer.count.records": "1000",
     "buffer.flush.time": "60",
     "buffer.size.bytes": "5000000",
+
+    "consumer.override.auto.offset.reset": "earliest",
 
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "io.confluent.connect.avro.AvroConverter",

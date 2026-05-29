@@ -44,6 +44,17 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _driver_key_to_int(key: Optional[str], n_drivers: int = 354) -> Optional[str]:
+    """Maps alphanumeric driver_key (e.g. 'wr2179397') to an integer string
+    in range 1..n_drivers so it joins against drivers.driver_id."""
+    if not key:
+        return None
+    digits = "".join(c for c in key if c.isdigit())
+    return str(int(digits or "0") % n_drivers + 1)
+
+
 # ── Domain → table mapping ────────────────────────────────────────────────────
 
 DOMAIN_CONFIG = {
@@ -70,7 +81,7 @@ DOMAIN_CONFIG = {
             "total_amount": r.get("total_amount"),
             "user_key": r.get("user_key"),
             "restaurant_key": r.get("restaurant_key"),
-            "driver_key": r.get("driver_key"),
+            "driver_key": _driver_key_to_int(r.get("driver_key")),
             "payment_key": r.get("payment_key"),
             "rating_key": r.get("rating_key"),
             "dt_current_timestamp": r.get("dt_current_timestamp"),

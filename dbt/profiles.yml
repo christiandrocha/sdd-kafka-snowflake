@@ -1,4 +1,4 @@
-ai_kafka_microbatch:
+sdd_kafka_snowflake:
   target: "{{ env_var('DBT_TARGET', 'dev') }}"
   outputs:
 

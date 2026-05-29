@@ -21,16 +21,16 @@ WITH source AS (
         RECORD_CONTENT:status_id::INT                        AS status_id,
         RECORD_CONTENT:order_identifier::VARCHAR             AS order_identifier,
 
-        -- Expand nested status JSONB into flat columns
-        RECORD_CONTENT:status:status_name::VARCHAR           AS status_name,
+        -- status field arrives as escaped JSON string — requires PARSE_JSON before path traversal
+        PARSE_JSON(RECORD_CONTENT:status):status_name::VARCHAR AS status_name,
 
         -- Normalize timestamp: same int/float dual-format as payment_events
         CAST(
-            RECORD_CONTENT:status:timestamp::FLOAT AS BIGINT
+            PARSE_JSON(RECORD_CONTENT:status):timestamp::FLOAT AS BIGINT
         )                                                    AS status_timestamp_ms,
 
         TO_TIMESTAMP_NTZ(
-            CAST(RECORD_CONTENT:status:timestamp::FLOAT AS BIGINT) / 1000
+            CAST(PARSE_JSON(RECORD_CONTENT:status):timestamp::FLOAT AS BIGINT) / 1000
         )                                                    AS status_timestamp,
 
         RECORD_CONTENT:dt_current_timestamp::VARCHAR         AS dt_current_timestamp,

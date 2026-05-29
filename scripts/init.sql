@@ -388,7 +388,7 @@ CREATE INDEX IF NOT EXISTS idx_menu_sections_restaurant_id ON menu_sections (res
 --     Restaurant ratings — rating_key in orders references uuid here
 -- ════════════════════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS ratings (
-    rating_id            UUID           NOT NULL,
+    rating_id            INTEGER        NOT NULL,
     uuid                 UUID,          -- rating_key in orders = this uuid
     restaurant_identifier VARCHAR(20),  -- CNPJ or restaurant_id
     rating               NUMERIC(3,2),

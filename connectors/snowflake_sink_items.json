@@ -1,5 +1,5 @@
 {
-  "name": "snowflake-sink-items",
+  "name": "sink-items",
   "config": {
     "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
     "tasks.max": "2",
@@ -13,12 +13,16 @@
     "snowflake.schema.name": "BRONZE",
     "snowflake.role.name": "${SNOWFLAKE_ROLE}",
 
+    "snowflake.topic2table.map": "pg.public.order_items:ORDER_ITEMS",
+
     "snowflake.ingestion.method": "SNOWPIPE",
     "snowflake.schema.registry.url": "http://schema-registry:8081",
 
     "buffer.count.records": "5000",
     "buffer.flush.time": "120",
     "buffer.size.bytes": "25000000",
+
+    "consumer.override.auto.offset.reset": "earliest",
 
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "io.confluent.connect.avro.AvroConverter",

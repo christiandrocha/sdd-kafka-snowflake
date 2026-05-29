@@ -21,16 +21,17 @@ WITH source AS (
     SELECT
         RECORD_CONTENT:event_id::VARCHAR                     AS event_id,
         RECORD_CONTENT:payment_id::VARCHAR                   AS payment_id,
-        RECORD_CONTENT:event:event_name::VARCHAR             AS event_name,
+        PARSE_JSON(RECORD_CONTENT:event):event_name::VARCHAR AS event_name,
 
         -- Normalize: int (151/883) or float scientific (732/883) — both epoch ms
         -- CAST via FLOAT first handles both representations safely
+        -- event field arrives as escaped JSON string — requires PARSE_JSON before path traversal
         CAST(
-            RECORD_CONTENT:event:timestamp::FLOAT AS BIGINT
+            PARSE_JSON(RECORD_CONTENT:event):timestamp::FLOAT AS BIGINT
         )                                                    AS event_timestamp_ms,
 
         TO_TIMESTAMP_NTZ(
-            CAST(RECORD_CONTENT:event:timestamp::FLOAT AS BIGINT) / 1000
+            CAST(PARSE_JSON(RECORD_CONTENT:event):timestamp::FLOAT AS BIGINT) / 1000
         )                                                    AS event_timestamp,
 
         RECORD_CONTENT:dt_current_timestamp::VARCHAR         AS dt_current_timestamp,

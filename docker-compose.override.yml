@@ -33,12 +33,14 @@ services:
       - ./dbt:/opt/dagster/dbt
       - ./dagster:/opt/dagster/app
       - dagster_home:/opt/dagster/dagster_home
+      - ./scripts/rsa_key.p8:/secrets/snowflake_private_key.pem:ro
 
   dagster-daemon:
     volumes:
       - ./dbt:/opt/dagster/dbt
       - ./dagster:/opt/dagster/app
       - dagster_home:/opt/dagster/dagster_home
+      - ./scripts/rsa_key.p8:/secrets/snowflake_private_key.pem:ro
 
   jmx-exporter:
     ports:

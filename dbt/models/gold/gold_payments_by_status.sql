@@ -27,10 +27,8 @@ FROM {{ ref('silver_payment_current_state') }}
 WHERE current_status IN (
     SELECT DISTINCT current_status
     FROM {{ ref('silver_payment_current_state') }}
-    WHERE source_ts_ms > (
-        SELECT COALESCE(MAX(source_ts_ms), 0)
-        FROM {{ ref('silver_payment_current_state') }}
-        WHERE source_ts_ms <= (SELECT MAX(source_ts_ms) FROM {{ this }})
+    WHERE status_updated_at > (
+        SELECT COALESCE(MAX(last_updated_at), '1970-01-01'::TIMESTAMP_NTZ) FROM {{ this }}
     )
 )
 {% endif %}

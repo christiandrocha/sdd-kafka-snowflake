@@ -151,7 +151,7 @@ services:
     depends_on:
       - kafka-connect
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/server_info"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/server_info')"]
       interval: 15s
       timeout: 10s
       retries: 10

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dagster import AssetExecutionContext, asset
-from dagster_dbt import dbt_assets
+from dagster_dbt import dbt_assets, DbtCliResource
 from dagster_snowflake import SnowflakeResource
 
 from .resources import dbt_resource, DBT_PROJECT_DIR
