@@ -1,56 +1,79 @@
 {
   "id": null,
   "uid": "dagster-overview",
-  "title": "Dagster — Pipeline Runs",
-  "tags": ["dagster", "dbt"],
+  "title": "Dagster \u2014 Pipeline Throughput",
+  "tags": [
+    "dagster",
+    "dbt"
+  ],
   "timezone": "browser",
   "schemaVersion": 38,
   "version": 1,
   "refresh": "30s",
-  "time": {"from": "now-6h", "to": "now"},
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Pipeline Run Status",
+      "title": "Messages In \u2014 CDC Topics (rate/min)",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
-          "expr": "dagster_run_status",
-          "legendFormat": "{{status}}",
+          "expr": "rate(kafka_server_brokertopicmetrics_messagesin{topic=~\"pg\\.public\\..+\"}[1m]) * 60",
+          "legendFormat": "{{topic}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "red", "value": 1}
-            ]
-          }
+          "unit": "short",
+          "min": 0
         }
       }
     },
     {
       "id": 2,
-      "title": "Run Failures (last 6h)",
+      "title": "Lag Total \u2014 sink",
       "type": "stat",
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
-          "expr": "sum(dagster_run_status{status=\"FAILURE\"})",
+          "expr": "sum(kafka_consumergroup_lag{consumergroup=\"connect-sink\"})",
+          "legendFormat": "sink",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "red", "value": 1}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 5000
+              }
             ]
           }
         }
@@ -58,22 +81,39 @@
     },
     {
       "id": 3,
-      "title": "Successful Runs (last 6h)",
+      "title": "Lag Total \u2014 sinkitems",
       "type": "stat",
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 8
+      },
       "targets": [
         {
-          "expr": "sum(dagster_run_status{status=\"SUCCESS\"})",
+          "expr": "sum(kafka_consumergroup_lag{consumergroup=\"connect-sinkitems\"})",
+          "legendFormat": "sinkitems",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5000
+              },
+              {
+                "color": "red",
+                "value": 50000
+              }
             ]
           }
         }
@@ -81,19 +121,33 @@
     },
     {
       "id": 4,
-      "title": "Sensor Tick Rate (bronze_new_data_sensor)",
+      "title": "Bytes In \u2014 Top 5 CDC Topics",
       "type": "timeseries",
-      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 12},
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "targets": [
         {
-          "expr": "rate(dagster_sensor_ticks_total[5m])",
-          "legendFormat": "{{sensor_name}}",
+          "expr": "topk(5, rate(kafka_server_brokertopicmetrics_bytesin{topic=~\"pg\\.public\\..+\"}[1m]))",
+          "legendFormat": "{{topic}}",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
     }
   ],
-  "templating": {"list": []},
-  "annotations": {"list": []},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
   "links": []
 }

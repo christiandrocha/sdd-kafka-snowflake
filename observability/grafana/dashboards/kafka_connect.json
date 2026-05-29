@@ -1,67 +1,161 @@
 {
   "id": null,
   "uid": "kafka-connect-overview",
-  "title": "Kafka Connect — Connector Status",
-  "tags": ["kafka-connect", "debezium", "snowflake"],
+  "title": "Kafka Connect \u2014 CDC Pipeline Health",
+  "tags": [
+    "kafka-connect",
+    "debezium",
+    "snowflake"
+  ],
   "timezone": "browser",
   "schemaVersion": 38,
   "version": 1,
   "refresh": "30s",
-  "time": {"from": "now-1h", "to": "now"},
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Connector Status",
-      "type": "table",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "title": "Consumer Lag \u2014 sink (19 topics)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
-          "expr": "kafka_connect_connector_task_status",
-          "legendFormat": "{{connector}} / task {{task}}",
-          "refId": "A",
-          "instant": true
+          "expr": "kafka_consumergroup_lag{consumergroup=\"connect-sink\",topic=~\"pg\\.public\\..+\"}",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Consumer Lag \u2014 sinkitems (order_items)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "kafka_consumergroup_lag{consumergroup=\"connect-sinkitems\"}",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Total Lag \u2014 all connect groups",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(kafka_consumergroup_lag{consumergroup=~\"connect-.+\",topic=~\"pg\\.public\\..+\"})",
+          "legendFormat": "Total lag",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 10000
+              }
             ]
           }
         }
       }
     },
     {
-      "id": 2,
+      "id": 4,
       "title": "Request Rate (Produce/Fetch)",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 9,
+        "x": 6,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "rate(kafka_network_requestmetrics_requestspersec[1m])",
           "legendFormat": "{{request}}",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
     },
     {
-      "id": 3,
-      "title": "Log Size by Topic (bytes)",
+      "id": 5,
+      "title": "Log Size \u2014 CDC Topics (bytes)",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 9,
+        "x": 15,
+        "y": 8
+      },
       "targets": [
         {
-          "expr": "kafka_log_size_bytes",
-          "legendFormat": "{{topic}} / {{partition}}",
+          "expr": "kafka_log_size_bytes{topic=~\"pg\\.public\\..+\"}",
+          "legendFormat": "{{topic}}",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
     }
   ],
-  "templating": {"list": []},
-  "annotations": {"list": []},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
   "links": []
 }
