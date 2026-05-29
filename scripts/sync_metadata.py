@@ -118,16 +118,9 @@ def subject_to_topic(subject: str) -> str:
 # ── Snowflake ─────────────────────────────────────────────────────────────────
 
 def get_snowflake_conn():
-    """Returns a Snowflake connection using private key authentication."""
-    private_key_pem = base64.b64decode(SF_PRIVATE_KEY)
-    private_key = load_pem_private_key(
-        private_key_pem, password=None, backend=default_backend()
-    )
-    private_key_der = private_key.private_bytes(
-        encoding=Encoding.DER,
-        format=PrivateFormat.PKCS8,
-        encryption_algorithm=NoEncryption(),
-    )
+    """Returns a Snowflake connection using private key authentication.
+    SNOWFLAKE_PRIVATE_KEY is base64-encoded PKCS8 DER — pass directly to connector."""
+    private_key_der = base64.b64decode(SF_PRIVATE_KEY)
     return snowflake.connector.connect(
         account=SF_ACCOUNT,
         user=SF_USER,

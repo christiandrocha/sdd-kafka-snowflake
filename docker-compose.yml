@@ -146,6 +146,7 @@ services:
     volumes:
       - ./dbt:/opt/dagster/dbt
       - ./dagster:/opt/dagster/app
+      - ./scripts:/opt/dagster/scripts
       - dagster_home:/opt/dagster/dagster_home
     command: dagster-webserver -h 0.0.0.0 -p 3000 -w /opt/dagster/app/workspace.yaml
     depends_on:
@@ -169,6 +170,7 @@ services:
     volumes:
       - ./dbt:/opt/dagster/dbt
       - ./dagster:/opt/dagster/app
+      - ./scripts:/opt/dagster/scripts
       - dagster_home:/opt/dagster/dagster_home
     command: dagster-daemon run -w /opt/dagster/app/workspace.yaml
     depends_on:
