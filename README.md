@@ -19,43 +19,43 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SOURCE LAYER                                         │
-│   PostgreSQL 15 (WAL logical replication · REPLICA IDENTITY FULL)            │
+│                         SOURCE LAYER                                        │
+│   PostgreSQL 15 (WAL logical replication · REPLICA IDENTITY FULL)           │
 │   20 tables · 4 simulated sources (Kafka, MongoDB, MySQL, PostgreSQL/MSSQL) │
 └──────────────────────────────┬──────────────────────────────────────────────┘
                                │ pgoutput slot (debezium_slot)
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         STREAMING LAYER                                      │
-│   Debezium 2.4  ──►  Apache Kafka (Confluent 7.5)  ──►  Schema Registry    │
+│                         STREAMING LAYER                                     │
+│   Debezium 2.4  ──►  Apache Kafka (Confluent 7.5)  ──►  Schema Registry     │
 │   20 CDC topics · Avro serialization · BACKWARD compatibility               │
 └──────────────────────────────┬──────────────────────────────────────────────┘
                                │ Kafka Connect Snowflake Sink
                                │ 2 connectors: sink (19 topics) · sinkitems (order_items)
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         INGESTION LAYER — BRONZE (Snowflake)                 │
+│                         INGESTION LAYER — BRONZE (Snowflake)                │
 │   Snowpipe · 20 raw tables (RECORD_CONTENT VARIANT + RECORD_METADATA)       │
 │   20 stages · 20 pipes · RSA Key Pair authentication                        │
 └──────────────────────────────┬──────────────────────────────────────────────┘
                                │ dbt Core 1.7 — incremental MERGE
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                  TRANSFORMATION LAYER — dbt Medallion Architecture           │
-│                                                                              │
+│                  TRANSFORMATION LAYER — dbt Medallion Architecture          │
+│                                                                             │
 │  Bronze (20 models)    Silver (9 models)        Gold (6 models)             │
 │  ─────────────────     ─────────────────        ──────────────              │
 │  Flatten VARIANT       Deduplicate by PK         Cross-domain analytics     │
 │  Cast + normalize      Enrich via joins          Aggregations for BI        │
 │  PARSE_JSON JSONB      CDC upsert / merge        Engagement tiers           │
-│  Filter op != 'd'      CPF/CNPJ business keys    Revenue · Funnel · KPIs   │
+│  Filter op != 'd'      CPF/CNPJ business keys    Revenue · Funnel · KPIs    │
 └──────────────────────────────┬──────────────────────────────────────────────┘
                                │ Dagster 1.6 — sensor-driven orchestration
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      ORCHESTRATION + OBSERVABILITY                           │
+│                      ORCHESTRATION + OBSERVABILITY                          │
 │   Dagster · bronze_new_data_sensor (60s) · CONFIG.PROCESSING_LOG            │
-│   Prometheus 2.49 · JMX Exporter · Grafana 10.2 (3 dashboards)             │
+│   Prometheus 2.49 · JMX Exporter · Grafana 10.2 (3 dashboards)              │
 │   Kafka UI · Schema Registry UI · dbt lineage graph                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -123,26 +123,38 @@
 
 ## dbt Medallion Architecture
 
-```
-BRONZE (20 models)                  SILVER (9 models)              GOLD (6 models)
-──────────────────                  ─────────────────              ──────────────
-bronze_orders          ──────────►  silver_orders         ──────►  gold_revenue_per_restaurant
-bronze_restaurants                  silver_users          ──────►  gold_user_behavior
-bronze_drivers         ──────────►  silver_drivers        ──►
-bronze_driver_shifts   ──────────►  silver_driver_shifts  ──────►  gold_driver_performance
-bronze_payment_events  ──────────►  silver_payment_events_history ► gold_payment_funnel
-                                                          ──────►  gold_payment_lifecycle
-                                    silver_payment_current_state ►  gold_payments_by_status
-bronze_order_items     ──────────►  silver_order_items    ──────►  gold_revenue_per_restaurant
-bronze_search_events   ──────────►  silver_search_events  ──────►  gold_user_behavior
-bronze_recommendations ──────────►  silver_recommendations ─────►  gold_user_behavior
-```
+35 models across 3 layers — strictly Bronze → Silver → Gold, no layer skipping.
 
-**Key transformation decisions:**
-- JSONB fields (`event`, `status`) arrive as escaped strings via Debezium/Avro → `PARSE_JSON()` required before path traversal
-- `silver_users` unifies `users_mongo` + `users_mssql` via FULL OUTER JOIN on CPF (11-digit Brazilian tax ID)
-- Timestamp normalization: `CAST(::FLOAT AS BIGINT)` handles both `INTEGER` and `FLOAT` scientific notation formats
-- All models use `incremental_strategy = 'merge'` for idempotent Snowpipe retries
+### Bronze → Silver — cleaning & enrichment
+
+| Silver Model | Source Bronze Models | What happens |
+|---|---|---|
+| `silver_orders` | `bronze_orders` + `bronze_restaurants` + `bronze_drivers` + `bronze_users_mongo` | Denormalize: resolve restaurant name (CNPJ), driver name, user email |
+| `silver_users` | `bronze_users_mongo` + `bronze_users_mssql` | FULL OUTER JOIN on CPF — unifies two user systems into one entity |
+| `silver_drivers` | `bronze_drivers` | Deduplicate on business key `driver_id` (Bronze dedupes on `uuid`) |
+| `silver_driver_shifts` | `bronze_driver_shifts` + `silver_drivers` | Enrich shifts with driver name and vehicle profile |
+| `silver_payment_events_history` | `bronze_payment_events` | `PARSE_JSON(event)` — JSONB field arrives as escaped string; extract `event_name` + timestamp |
+| `silver_payment_current_state` | `silver_payment_events_history` | Latest lifecycle state per `payment_id` via window function |
+| `silver_order_items` | `bronze_order_items` | Filter hard deletes (`op != 'd'`) |
+| `silver_search_events` | `bronze_search_events` | Filter hard deletes |
+| `silver_recommendations` | `bronze_recommendations` | Filter hard deletes |
+
+### Silver → Gold — analytics
+
+| Gold Model | Source Silver Models | Business question answered |
+|---|---|---|
+| `gold_payment_funnel` | `silver_payment_events_history` | What is the conversion rate at each payment lifecycle stage? |
+| `gold_payment_lifecycle` | `silver_payment_events_history` | How long does each payment transition take (seconds)? |
+| `gold_payments_by_status` | `silver_payment_current_state` | How many payments are in each status right now? |
+| `gold_driver_performance` | `silver_driver_shifts` + `silver_orders` | What are earnings/hour and delivery count per shift? |
+| `gold_revenue_per_restaurant` | `silver_orders` + `silver_order_items` | What is daily gross revenue and item breakdown per restaurant? |
+| `gold_user_behavior` | `silver_users` + `silver_orders` + `silver_search_events` + `silver_recommendations` | What is each user's engagement tier, total spend, and search/recommendation activity? |
+
+**Notable transformations:**
+- `PARSE_JSON()` on JSONB fields — PostgreSQL JSONB columns are serialized by Debezium/Avro as escaped JSON strings, not nested objects; direct path traversal returns NULL
+- CPF normalization — `REGEXP_REPLACE(cpf, '[^0-9]', '')` strips formatting before joining across systems
+- Timestamp normalization — `CAST(::FLOAT AS BIGINT)` handles both integer and scientific notation epoch milliseconds
+- All incremental models use `merge` strategy — safe for Snowpipe at-least-once delivery
 
 ---
 
