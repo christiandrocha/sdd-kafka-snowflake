@@ -79,14 +79,14 @@ register_connector() {
 
 register_connector "debezium-postgres-cdc" "${CONNECTORS_DIR}/debezium.json"
 register_connector "sink"                   "${CONNECTORS_DIR}/snowflake_sink.json"
-register_connector "sink-items"             "${CONNECTORS_DIR}/snowflake_sink_items.json"
+register_connector "sinkitems"              "${CONNECTORS_DIR}/snowflake_sink_items.json"
 
 # ── Status check ─────────────────────────────────────────────────────────────
 echo -e "\n${YELLOW}⏳  Waiting for connectors to stabilize (15s)...${RESET}"
 sleep 15
 
 echo -e "\n${CYAN}── Connector status ──────────────────────────────────────${RESET}"
-for connector in debezium-postgres-cdc sink sink-items; do
+for connector in debezium-postgres-cdc sink sinkitems; do
     STATUS=$(curl -sf "${CONNECT_URL}/connectors/${connector}/status" \
         | python3 -c "import sys,json; print(json.load(sys.stdin)['connector']['state'])" 2>/dev/null || echo "UNKNOWN")
     [ "$STATUS" = "RUNNING" ] \

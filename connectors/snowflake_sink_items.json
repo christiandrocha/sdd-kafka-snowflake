@@ -1,5 +1,5 @@
 {
-  "name": "sink-items",
+  "name": "sinkitems",
   "config": {
     "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
     "tasks.max": "2",
