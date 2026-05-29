@@ -28,7 +28,7 @@ user_searches AS (
         COUNT(DISTINCT search_id)            AS num_searches,
         AVG(result_count)                    AS avg_search_results,
         COUNT(CASE WHEN clicked_product_id IS NOT NULL THEN 1 END) AS searches_with_click
-    FROM {{ ref('bronze_search_events') }}
+    FROM {{ ref('silver_search_events') }}
     GROUP BY user_id
 ),
 
@@ -39,7 +39,7 @@ user_recommendations AS (
         COUNT(CASE WHEN event_type = 'click' THEN 1 END)       AS rec_clicks,
         COUNT(CASE WHEN event_type = 'purchase' THEN 1 END)    AS rec_purchases,
         COUNT(CASE WHEN event_type = 'dismiss' THEN 1 END)     AS rec_dismissals
-    FROM {{ ref('bronze_recommendations') }}
+    FROM {{ ref('silver_recommendations') }}
     GROUP BY user_id
 )
 

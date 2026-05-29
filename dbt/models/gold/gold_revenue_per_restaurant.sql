@@ -16,7 +16,7 @@ WITH order_items AS (
         SUM(quantity)                        AS total_items,
         COUNT(DISTINCT order_item_id)        AS line_count,
         SUM(discount_applied)                AS total_discount
-    FROM {{ ref('bronze_order_items') }}
+    FROM {{ ref('silver_order_items') }}
     GROUP BY order_id
 ),
 
