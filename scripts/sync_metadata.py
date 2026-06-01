@@ -213,6 +213,9 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
             **meta,
         }
 
+        strategy_changed = any(f == "cdc_strategy" for f, _, _ in changes)
+        previous_strategy = current["cdc_strategy"] if strategy_changed else current.get("previous_strategy")
+
         if not dry_run:
             conn.cursor().execute(f"""
                 UPDATE {METADATA_TABLE}
@@ -225,7 +228,7 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
                     source            = 'schema_registry'
                 WHERE table_name = %s
             """, (meta_update["table_type"], meta_update["cdc_strategy"], meta_update["unique_key"],
-                  current["cdc_strategy"], changed_by, now, table_name))
+                  previous_strategy, changed_by, now, table_name))
 
             for field, old_val, new_val in changes:
                 conn.cursor().execute(f"""

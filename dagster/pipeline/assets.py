@@ -76,11 +76,37 @@ def log_processing_results(
     rows_to_insert = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
+    # Build table row counts from Snowflake for rows_processed (adapter_response is empty for custom MERGE)
+    row_counts: dict[str, int] = {}
+    with snowflake.get_connection() as _conn:
+        _cur = _conn.cursor()
+        for result in results:
+            uid = result.get("unique_id", "")
+            if not uid.startswith("model."):
+                continue
+            mname = uid.split(".")[-1]
+            if mname.startswith("bronze_"):
+                schema = "BRONZE"
+            elif mname.startswith("silver_"):
+                schema = "SILVER"
+            elif mname.startswith("gold_"):
+                schema = "GOLD"
+            else:
+                continue
+            try:
+                _cur.execute(f"SELECT COUNT(*) FROM {SF_DATABASE}.{schema}.{mname.upper()}")
+                row_counts[mname] = _cur.fetchone()[0]
+            except Exception:
+                row_counts[mname] = 0
+
     for result in results:
-        node_name    = result.get("unique_id", "")     # model.project.bronze_usuarios
-        model_name   = node_name.split(".")[-1]        # bronze_usuarios
+        node_name = result.get("unique_id", "")
+
+        if not node_name.startswith("model."):
+            continue
+
+        model_name   = node_name.split(".")[-1]        # bronze_payment_events
         status       = result.get("status", "unknown")
-        adapter_resp = result.get("adapter_response", {})
         timing       = result.get("timing", [])
 
         # Determine layer from model name prefix
@@ -100,14 +126,8 @@ def log_processing_results(
             .replace("gold_", "")
         )
 
-        # Row counts from adapter response (Snowflake MERGE stats)
-        rows_inserted = adapter_resp.get("rows_inserted", 0)
-        rows_updated  = adapter_resp.get("rows_updated", 0)
-        rows_deleted  = adapter_resp.get("rows_deleted", 0)
-        rows_affected = adapter_resp.get("rows_affected",
-                        rows_inserted + rows_updated + rows_deleted)
+        rows_processed = row_counts.get(model_name, 0)
 
-        # Timing
         started_at  = None
         finished_at = None
         duration    = result.get("execution_time", 0)
@@ -122,11 +142,12 @@ def log_processing_results(
 
         rows_to_insert.append((
             table_name, layer, model_name, invocation_id,
-            str(id(context)),          # run_id (Dagster run id)
+            context.run_id,
             "success" if status == "success" else "error",
-            rows_affected, rows_inserted, rows_updated, rows_deleted,
+            rows_processed, 0, 0, 0,
             started_at, finished_at, round(duration, 3),
             error_message, "sensor",
+            now,
         ))
 
     if not rows_to_insert:
@@ -138,9 +159,9 @@ def log_processing_results(
             table_name, layer, dbt_model, dbt_invocation_id, run_id,
             status, rows_processed, rows_inserted, rows_updated, rows_deleted,
             started_at, finished_at, duration_seconds,
-            error_message, triggered_by
+            error_message, triggered_by, logged_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s, %s, %s)
+                  %s, %s, %s, %s, %s, %s)
     """
 
     with snowflake.get_connection() as conn:
