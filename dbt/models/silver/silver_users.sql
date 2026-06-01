@@ -7,10 +7,11 @@
 
 -- Silver: unified user entity from MongoDB and MSSQL sources.
 -- FULL OUTER JOIN on CPF (normalized to 11 digits, digits only).
+-- Each source is deduplicated first (latest KAFKA_OFFSET wins per CPF).
 -- users_mongo wins on contact fields; users_mssql contributes extended profile.
 -- materialized='table' because FULL OUTER JOIN is incompatible with incremental merge.
 
-WITH mongo AS (
+WITH mongo_raw AS (
     SELECT
         uuid                                                     AS mongo_uuid,
         user_id                                                  AS mongo_user_id,
@@ -19,11 +20,20 @@ WITH mongo AS (
         phone_number,
         city,
         country,
-        delivery_address
+        delivery_address,
+        kafka_offset,
+        ROW_NUMBER() OVER (
+            PARTITION BY REGEXP_REPLACE(cpf, '[^0-9]', '')
+            ORDER BY kafka_offset DESC
+        )                                                        AS rn
     FROM {{ ref('bronze_users_mongo') }}
 ),
 
-mssql AS (
+mongo AS (
+    SELECT * FROM mongo_raw WHERE rn = 1
+),
+
+mssql_raw AS (
     SELECT
         uuid                                                     AS mssql_uuid,
         user_id                                                  AS mssql_user_id,
@@ -34,8 +44,17 @@ mssql AS (
         birthday,
         job,
         company_name,
-        country                                                  AS mssql_country
+        country                                                  AS mssql_country,
+        kafka_offset,
+        ROW_NUMBER() OVER (
+            PARTITION BY REGEXP_REPLACE(cpf, '[^0-9]', '')
+            ORDER BY kafka_offset DESC
+        )                                                        AS rn
     FROM {{ ref('bronze_users_mssql') }}
+),
+
+mssql AS (
+    SELECT * FROM mssql_raw WHERE rn = 1
 ),
 
 joined AS (

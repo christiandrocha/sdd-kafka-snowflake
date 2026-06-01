@@ -268,7 +268,7 @@ def sync(dry_run: bool = False) -> dict:
             meta        = parse_doc_metadata(doc)
 
             log.info(f"Processing {subject} → table={table_name} "
-                     f"type={meta['table_type']} strategy={meta['cdc_strategy']}")
+                     f"type={meta.get('table_type', '?')} strategy={meta.get('cdc_strategy', '?')}")
 
             change_type = upsert_metadata(
                 conn, table_name, topic, meta, existing, dry_run
