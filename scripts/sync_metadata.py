@@ -82,9 +82,10 @@ def parse_doc_metadata(doc: Optional[str]) -> dict:
     """
     Parses the doc field of an Avro schema for CDC metadata.
     Expected format: "table_type=entity,cdc_strategy=upsert,unique_key=id"
-    Falls back to DOC_DEFAULTS for missing fields.
+    Returns only fields explicitly present in doc — no defaults applied.
+    Callers apply DOC_DEFAULTS only when inserting a new row.
     """
-    result = dict(DOC_DEFAULTS)
+    result = {}
     if not doc:
         return result
     for part in doc.split(","):
@@ -160,8 +161,10 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
     changed_by = "sync_metadata.py"
 
     if table_name not in existing:
+        # New table: fill any missing doc fields with DOC_DEFAULTS
+        meta_insert = {**DOC_DEFAULTS, **meta}
         change_type = "insert"
-        log.info(f"  [INSERT] {table_name} → strategy={meta['cdc_strategy']}")
+        log.info(f"  [INSERT] {table_name} → strategy={meta_insert['cdc_strategy']}")
 
         if not dry_run:
             conn.cursor().execute(f"""
@@ -169,23 +172,29 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
                     (table_name, topic, table_type, cdc_strategy,
                      unique_key, source, changed_by, updated_at)
                 VALUES (%s, %s, %s, %s, %s, 'schema_registry', %s, %s)
-            """, (table_name, topic, meta["table_type"], meta["cdc_strategy"],
-                  meta["unique_key"], changed_by, now))
+            """, (table_name, topic, meta_insert["table_type"], meta_insert["cdc_strategy"],
+                  meta_insert["unique_key"], changed_by, now))
 
             conn.cursor().execute(f"""
                 INSERT INTO {HISTORY_TABLE}
                     (table_name, changed_by, change_type, field_changed,
                      old_value, new_value, source)
                 VALUES (%s, %s, 'insert', 'all', null, %s, 'schema_registry')
-            """, (table_name, changed_by, json.dumps(meta)))
+            """, (table_name, changed_by, json.dumps(meta_insert)))
 
     else:
+        if not meta:
+            # doc absent or empty: preserve existing metadata, never overwrite with defaults
+            log.warning(f"  [SKIP] {table_name}: doc field absent in schema, existing metadata preserved")
+            return "no_change"
+
         current = existing[table_name]
         changes = []
 
-        for field in ["table_type", "cdc_strategy", "unique_key"]:
+        # Compare only fields explicitly declared in doc
+        for field in meta:
             old_val = current.get(field)
-            new_val = meta.get(field)
+            new_val = meta[field]
             if old_val != new_val:
                 changes.append((field, old_val, new_val))
 
@@ -195,6 +204,14 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
         change_type = "update"
         for field, old_val, new_val in changes:
             log.info(f"  [UPDATE] {table_name}.{field}: {old_val!r} → {new_val!r}")
+
+        # Merge: keep existing values for fields not present in doc
+        meta_update = {
+            "table_type":   current["table_type"],
+            "cdc_strategy": current["cdc_strategy"],
+            "unique_key":   current["unique_key"],
+            **meta,
+        }
 
         if not dry_run:
             conn.cursor().execute(f"""
@@ -207,7 +224,7 @@ def upsert_metadata(conn, table_name: str, topic: str, meta: dict,
                     updated_at        = %s,
                     source            = 'schema_registry'
                 WHERE table_name = %s
-            """, (meta["table_type"], meta["cdc_strategy"], meta["unique_key"],
+            """, (meta_update["table_type"], meta_update["cdc_strategy"], meta_update["unique_key"],
                   current["cdc_strategy"], changed_by, now, table_name))
 
             for field, old_val, new_val in changes:
