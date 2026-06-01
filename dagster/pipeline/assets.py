@@ -144,7 +144,7 @@ def log_processing_results(
             table_name, layer, model_name, invocation_id,
             context.run_id,
             "success" if status == "success" else "error",
-            rows_processed, 0, 0, 0,
+            rows_processed,
             started_at, finished_at, round(duration, 3),
             error_message, "sensor",
             now,
@@ -157,10 +157,10 @@ def log_processing_results(
     insert_sql = f"""
         INSERT INTO {SF_DATABASE}.CONFIG.PROCESSING_LOG (
             table_name, layer, dbt_model, dbt_invocation_id, run_id,
-            status, rows_processed, rows_inserted, rows_updated, rows_deleted,
+            status, rows_processed,
             started_at, finished_at, duration_seconds,
             error_message, triggered_by, logged_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s, %s)
     """
 
