@@ -141,7 +141,7 @@ sources:
             tests:
               - not_null
               - accepted_values:
-                  values: ['entity', 'fact', 'log']
+                  values: ['entity', 'event', 'fact', 'log']
           - name: active
             tests: [not_null]
 

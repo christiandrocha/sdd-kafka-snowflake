@@ -1,12 +1,8 @@
--- tests/payment_history_starts_with_created.sql
--- Every payment_id must have a 'created' event as its first event (sequence=1).
--- Fails (returns rows) if any payment starts with a different event name.
--- This validates that no events are missing from the beginning of the lifecycle.
+-- Every payment_id must have at least one 'created' event in its history.
+-- Kafka out-of-order delivery means 'created' may not be the lowest timestamp,
+-- but it must exist to represent a valid payment lifecycle start.
 
-SELECT
-    payment_id,
-    event_name,
-    event_sequence
+SELECT payment_id
 FROM {{ ref('silver_payment_events_history') }}
-WHERE event_sequence = 1
-  AND event_name != 'created'
+GROUP BY payment_id
+HAVING SUM(CASE WHEN event_name = 'created' THEN 1 ELSE 0 END) = 0
