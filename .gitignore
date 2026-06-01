@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+scripts/rsa_key.p8
+scripts/rsa_key.pub
 
 # Docker & Infra artifacts
 data/
@@ -10,9 +12,9 @@ tmp/
 *.log
 
 # dbt build artifacts
-infra/dbt/target/
-infra/dbt/dbt_packages/
-infra/dbt/logs/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
 
 # Python
 __pycache__/
@@ -26,7 +28,7 @@ build/
 venv/
 
 # Dagster
-infra/dagster/dagster_home/
+dagster/dagster_home/
 
 # Security & Secrets
 .secrets.baseline
