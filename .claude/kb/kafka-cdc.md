@@ -55,17 +55,29 @@ Transforms the complex Debezium payload into a flat payload:
 }
 ```
 
-`__op` preserves the operation type. `__source_ts_ms` is the event timestamp
-in PostgreSQL — used for Hive partitioning.
+`__op` preserves the operation type. `__source_ts_ms` é o timestamp do evento
+no PostgreSQL — usado nos Silver models para ordenar eventos e filtrar a janela
+incremental (`source_ts_ms DESC` no ROW_NUMBER, `source_ts_ms > MAX(source_ts_ms)` no filtro).
 
-## Publication and replication slot
+### delete.handling.mode=rewrite + drop.tombstones=false
+
+DELETEs não são descartados. O SMT os reescreve como eventos normais com `__op=d`
+no payload — o registro deleted chega no Kafka com seus valores e `__op=d`.
+Tombstones (mensagens com value=null) são mantidos (`drop.tombstones=false`).
+Os Silver models filtram `op != 'd'` para excluir DELETEs do estado atual.
+
+## Publication e replication slot
 
 ```sql
--- Publication: tells PostgreSQL which tables to publish
-CREATE PUBLICATION dbz_publication FOR TABLE usuarios, produtos;
+-- Publication cobre todos os 20 domínios (criada por scripts/init.sql)
+CREATE PUBLICATION dbz_publication FOR TABLE
+    payment_events, orders, payments, order_items, gps_events,
+    order_status, routes, receipts, driver_shifts, search_events,
+    recommendations, support_tickets, users_mongo, users_mssql,
+    restaurants, drivers, products, menu_sections, ratings, inventory;
 
--- The replication slot is created automatically by Debezium
--- on startup with slot.name=debezium_slot
+-- O replication slot é criado automaticamente pelo Debezium no startup
+-- slot.name=debezium_slot
 ```
 
 ## Initial snapshot
@@ -74,25 +86,56 @@ On first run, Debezium performs a full snapshot of the tables before
 starting WAL streaming. All existing records are emitted with `op=r`.
 The snapshot ensures the landing starts with the complete database state.
 
-## Generated Kafka topics
+## Tópicos Kafka gerados
 
-Format: `{topic.prefix}.{postgres_schema}.{table}`
+Formato: `{topic.prefix}.{postgres_schema}.{table}` — com `topic.prefix=pg`:
 
-With `topic.prefix=pg`:
-- `pg.public.usuarios`
-- `pg.public.produtos`
+```
+pg.public.payment_events    pg.public.orders         pg.public.payments
+pg.public.order_items       pg.public.gps_events     pg.public.order_status
+pg.public.routes            pg.public.receipts       pg.public.driver_shifts
+pg.public.search_events     pg.public.recommendations pg.public.support_tickets
+pg.public.users_mongo       pg.public.users_mssql    pg.public.restaurants
+pg.public.drivers           pg.public.products       pg.public.menu_sections
+pg.public.ratings           pg.public.inventory
+```
 
-## Adding a new table
+20 tópicos no total. `order_items` vai para o conector `sinkitems` (buffer maior).
+Os outros 19 vão para o conector `sink`.
+
+## Configurações críticas do conector Debezium
+
+Configurações que afetam diretamente o tipo e formato dos dados no Kafka:
+
+| Configuração | Valor | Efeito |
+|---|---|---|
+| `decimal.handling.mode` | `double` | NUMERIC/DECIMAL → float64 no Avro (não BYTES) |
+| `time.precision.mode` | `connect` | Timestamps → milissegundos (não microssegundos) |
+| `interval.handling.mode` | `string` | INTERVAL PostgreSQL → string legível |
+| `key.converter` | `JsonConverter` | Chaves dos eventos em JSON sem schema (não Avro) |
+| `value.converter` | `AvroConverter` | Payload em Avro via Schema Registry |
+| `value.converter.auto.register.schemas` | `true` | Registra schema automaticamente no Registry |
+
+`decimal.handling.mode=double` combinado com timestamps que chegam como int ou float
+(17% int, 83% float em notação científica) é o motivo do ADR-13:
+cast `::FLOAT` antes de `::BIGINT` nos Bronze models.
+
+## Adicionando uma nova tabela
 
 ```sql
--- 1. Create the table
-CREATE TABLE pedidos (...);
+-- 1. Criar a tabela no PostgreSQL
+CREATE TABLE nova_tabela (...);
 
--- 2. Add to the publication
-ALTER PUBLICATION dbz_publication ADD TABLE pedidos;
+-- 2. Adicionar à publication
+ALTER PUBLICATION dbz_publication ADD TABLE nova_tabela;
 
--- 3. Update connectors via REST API
--- (see 04_build.delegation.md — agent-connect section)
+-- 3. Registrar nos conectores via REST (envsubst resolve ${VAR} do .env)
+envsubst < connectors/debezium.json | \
+  curl -X PUT http://localhost:8083/connectors/debezium-postgres-cdc/config \
+  -H "Content-Type: application/json" -d @-
+
+-- 4. Executar sync_metadata.py para registrar em CONFIG.TABLE_METADATA
+python scripts/sync_metadata.py
 ```
 
 ## Replication slot — production warning

@@ -52,24 +52,24 @@ jobs:
         run: pip install dbt-core==1.7.* dbt-snowflake==1.7.*
 
       - name: dbt deps
-        working-directory: infra/dbt
+        working-directory: dbt
         run: dbt deps
 
       - name: dbt compile (no Snowflake connection)
-        working-directory: infra/dbt
+        working-directory: dbt
         run: dbt compile --profiles-dir .ci/profiles
         # .ci/profiles/profiles.yml uses dummy Snowflake credentials
         # dbt compile validates syntax and ref() without executing queries
 
       - name: Lint connector JSONs
         run: |
-          for f in infra/connectors/*.json; do
+          for f in connectors/*.json; do
             python -m json.tool "$f" > /dev/null || exit 1
           done
 
       - name: Check .env not committed
         run: |
-          if git diff --name-only origin/main...HEAD | grep -E '^infra/\.env$'; then
+          if git diff --name-only origin/main...HEAD | grep -E '^\.env$'; then
             echo "ERROR: .env file must not be committed"
             exit 1
           fi
@@ -100,8 +100,8 @@ jobs:
           POSTGRES_USER:         ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD:     ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          chmod +x infra/scripts/register_connectors.sh
-          cd infra && ./scripts/register_connectors.sh --env prod
+          chmod +x scripts/register_connectors.sh
+          ./scripts/register_connectors.sh --env prod
 
       - name: Restart Dagster
         run: |
@@ -142,9 +142,9 @@ Malformed Jinja, broken ref() and missing columns are caught here.
 !.env.example
 
 # dbt build artifacts
-infra/dbt/target/
-infra/dbt/dbt_packages/
-infra/dbt/logs/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
 
 # Python
 __pycache__/
@@ -153,7 +153,11 @@ __pycache__/
 .pytest_cache/
 
 # Dagster
-infra/dagster/dagster_home/
+dagster/dagster_home/
+
+# RSA keys
+rsa_key*.p8
+rsa_key*.pem
 
 # OS
 .DS_Store
@@ -212,8 +216,9 @@ services:
 
   dagster:
     volumes:
-      - ./dbt:/opt/dagster/dbt   # live reload dbt models in local
+      - ./dbt:/opt/dagster/dbt        # live reload dbt models in local
       - ./dagster:/opt/dagster/app
+      - ./scripts:/opt/dagster/scripts  # sync_metadata.py accessible to Dagster
 ```
 
 ## docker-compose.prod.yml — reference topology

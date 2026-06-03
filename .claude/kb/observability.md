@@ -62,12 +62,15 @@ kafka_server_replicamanager_underreplicatedpartitions
 ## Kafka Connect metrics
 
 ```
-# Connector status via REST
-GET http://localhost:8083/connectors/{name}/status
+# Connector status via REST (3 conectores registrados)
+GET http://localhost:8083/connectors/debezium-postgres-cdc/status
+GET http://localhost:8083/connectors/sink/status
+GET http://localhost:8083/connectors/sinkitems/status
 
-# Prometheus scrape target (custom exporter or kafka-connect-prometheus-reporter)
+# Prometheus scrape target (custom exporter ou kafka-connect-prometheus-reporter)
 kafka_connect_connector_status{connector="debezium-postgres-cdc"} 1.0  # 1=RUNNING
-kafka_connect_connector_status{connector="snowflake-sink"} 1.0
+kafka_connect_connector_status{connector="sink"} 1.0
+kafka_connect_connector_status{connector="sinkitems"} 1.0
 ```
 
 ## prometheus.yml configuration
