@@ -7,15 +7,14 @@ Three schemas in Snowflake, each built by dbt:
 
 ```
 BRONZE  →  Raw events from Snowpipe. VARIANT → typed. One row per Kafka event.
-           Append-only. Never modified after creation.
+           Incremental merge on PK. Deduplicates within batch before merge.
 
-SILVER  →  Current state per entity. One row per id.
-           DELETEs resolved (filtered out). Deduplicated via resolve_cdc macro.
-           Rebuilt fully on every dbt run (table materialization).
+SILVER  →  Current state or history per entity. Incremental merge on PK.
+           DELETEs filtered inline (op != 'd'). Joins to enrich where needed.
+           Exception: silver_users is materialized='table' (FULL OUTER JOIN on CPF).
 
-GOLD    →  Business-ready analytical models.
-           Aggregations, joins, metrics. Built from Silver only.
-           Views or tables depending on query frequency.
+GOLD    →  Cross-domain analytical models. materialized='table' or 'incremental'.
+           No views. Built from Silver (and Silver_order_items) only.
 ```
 
 ## CDC resolution — inline per Silver model
@@ -188,21 +187,68 @@ sdd_kafka_snowflake:
       threads: 8
 ```
 
-## dbt tests for CDC
+## Silver model inventory
 
-```sql
--- tests/silver_usuarios_no_deletes.sql
--- Fails if any deleted record appears in Silver
-SELECT id FROM {{ ref('silver_usuarios') }}
-WHERE op = 'd'
+| Modelo | PK | Padrão | Nota |
+|---|---|---|---|
+| `silver_orders` | `order_id` | incremental | Enriquece com restaurant_name, driver_name, user_email via JOINs em Bronze |
+| `silver_users` | `cpf_normalized` | **table** | FULL OUTER JOIN `users_mongo` + `users_mssql` por CPF (incompatível com incremental) |
+| `silver_drivers` | `driver_id` | incremental | Deduplica no business key `driver_id` (Bronze deduplica em `uuid`) |
+| `silver_driver_shifts` | `shift_id` | incremental | Enriquece com `silver_drivers` (nome, veículo). Filtra `op='d'` |
+| `silver_payment_events_history` | `event_id` | incremental | Histórico completo de eventos de pagamento. Window por `source_ts_ms` |
+| `silver_payment_current_state` | `payment_id` | incremental | Estado atual por payment. **Lê de `silver_payment_events_history`**, não do Bronze |
+| `silver_order_items` | `order_item_id` | incremental | Fact table. Filtra `op='d'` |
+| `silver_recommendations` | `event_id` | incremental | Eventos de ML (view, click, purchase, dismiss) |
+| `silver_search_events` | `search_id` | incremental | Queries de busca dos usuários |
 
--- tests/silver_usuarios_unique_id.sql
--- Fails if any id appears more than once in Silver
-SELECT id, COUNT(*) AS cnt
-FROM {{ ref('silver_usuarios') }}
-GROUP BY id
-HAVING cnt > 1
+### Padrão de dois modelos — payment_events
+
+`payment_events` é o único domínio com dois Silver models:
+
 ```
+bronze_payment_events
+    └── silver_payment_events_history   (event_id PK — todo o histórico)
+            └── silver_payment_current_state  (payment_id PK — estado atual)
+```
+
+`silver_payment_current_state` usa ROW_NUMBER() sobre `silver_payment_events_history`
+para pegar o evento mais recente por `payment_id`. Inclui campos derivados:
+`current_status`, `is_closed`, `closed_via_refund`, `is_in_progress`, `stage_order` (1–6).
+
+## Gold model inventory
+
+| Modelo | Materialização | Descrição |
+|---|---|---|
+| `gold_revenue_per_restaurant` | table | Receita por restaurante por dia (orders + order_items) |
+| `gold_payment_funnel` | table | Funil de conversão: quantos pagamentos chegaram a cada stage |
+| `gold_payment_lifecycle` | incremental | Ciclo de vida completo por payment_id com timestamps de cada stage |
+| `gold_payments_by_status` | incremental | Contagem e valor agregado por status de pagamento |
+| `gold_driver_performance` | table | Performance por motorista: pedidos, distância, ganhos, rating |
+| `gold_user_behavior` | table | Comportamento do usuário: buscas, pedidos, tickets, ratings |
+
+## dbt custom tests (tests/)
+
+Todos os testes retornam linhas quando falham (padrão dbt).
+
+| Arquivo | Modelo testado | O que valida |
+|---|---|---|
+| `bronze_no_duplicate_event_ids.sql` | `bronze_payment_events` | PK único após merge — detecta misconfiguration do merge strategy |
+| `silver_history_unique_event_id.sql` | `silver_payment_events_history` | `event_id` único — merge por event_id funciona |
+| `silver_history_no_deletes.sql` | `silver_payment_events_history` | Nenhum `op='d'` na tabela de histórico |
+| `silver_current_state_unique_payment_id.sql` | `silver_payment_current_state` | `payment_id` único — ROW_NUMBER() correto |
+| `current_state_referential_integrity.sql` | `silver_payment_current_state` | Todo `payment_id` em current_state existe em history |
+| `payment_history_starts_with_created.sql` | `silver_payment_events_history` | Todo `payment_id` tem pelo menos um evento `created` |
+| `silver_users_unique_cpf.sql` | `silver_users` | CPF único após FULL OUTER JOIN — detecta CPF duplicado nas fontes |
+
+## sources.yml — duas fontes declaradas
+
+**`bronze_raw`** (schema `BRONZE`): 20 tabelas raw do Snowpipe.
+Freshness: warn > 5 min, error > 15 min. Campo: `RECORD_METADATA:CreateTime::TIMESTAMP_NTZ`.
+Cada tabela tem descrição com origem CDC, volume e quirks (ex: timestamps float, ausência de `dt_current_timestamp`).
+
+**`config`** (schema `CONFIG`): tabelas de metadados — nunca escritas pelo dbt.
+Inclui testes de coluna em `TABLE_METADATA` (`unique`, `not_null`, `accepted_values` para `cdc_strategy` e `table_type`),
+freshness em `PROCESSING_LOG` (warn > 30 min, error > 60 min), e testes de unicidade em `METADATA_HISTORY`.
 
 ## dbt_project.yml structure
 
