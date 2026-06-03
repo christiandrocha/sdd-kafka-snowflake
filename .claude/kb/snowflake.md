@@ -198,20 +198,75 @@ GROUP BY table_schema;
 -- BRONZE: 1,1 | SILVER: 7,7 | GOLD: 7,7
 ```
 
-## CONFIG schema — metadata and observability tables
+## CONFIG schema — 3 tabelas de metadados e observabilidade
 
-Beyond BRONZE/SILVER/GOLD, the project uses a `CONFIG` schema with two tables:
+Criado por `scripts/bootstrap_metadata.sql` (run once). Grants para `CDC_ROLE`
+incluem SELECT, INSERT, UPDATE em todas as tabelas do schema.
 
-**`CONFIG.TABLE_METADATA`** — one row per domain, drives dbt macro config.
-Fields: `table_name`, `table_type`, `cdc_strategy`, `unique_key`, `active`.
-Populated by `scripts/bootstrap_metadata.sql` and kept in sync by `sync_metadata.py`
-(triggered by `registry_new_subject_sensor` when new Avro subjects are detected).
+### CONFIG.TABLE_METADATA
 
-**`CONFIG.PROCESSING_LOG`** — append-only log written by the Dagster
-`log_processing_results` asset after each `dbt run`. One row per dbt model per run.
-Fields: `table_name`, `layer`, `dbt_model`, `dbt_invocation_id`, `run_id`,
-`status`, `rows_processed`, `started_at`, `finished_at`, `duration_seconds`,
-`error_message`, `triggered_by`, `logged_at`.
+Uma linha por domínio. Fonte de verdade para o macro `get_table_config()` no dbt.
+Populada pelo bootstrap e mantida em sincronia pelo `sync_metadata.py`
+(disparado por `registry_new_subject_sensor`).
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `table_name` | VARCHAR PK | Nome da tabela (ex: `orders`) |
+| `topic` | VARCHAR | Kafka topic correspondente (ex: `pg.public.orders`) |
+| `table_type` | VARCHAR | `entity`, `fact` ou `log` |
+| `cdc_strategy` | VARCHAR | `upsert` (todos os 20 domínios) |
+| `unique_key` | VARCHAR | PK da tabela usada no MERGE |
+| `active` | BOOLEAN | `true` = processada pelo dbt |
+| `registered_at` | TIMESTAMP_NTZ | Inserção inicial |
+| `updated_at` | TIMESTAMP_NTZ | Última atualização |
+| `source` | VARCHAR | `manual` (bootstrap) ou `schema_registry` (sync) |
+| `previous_strategy` | VARCHAR | Valor anterior de `cdc_strategy` ao fazer update |
+| `changed_by` | VARCHAR | Ex: `bootstrap`, `sync_metadata.py` |
+| `notes` | VARCHAR | Descrição livre por domínio |
+
+`sync_metadata.py` lê o campo `doc` do schema Avro no Registry
+(formato `table_type=entity,cdc_strategy=upsert,unique_key=id`) e:
+- **Novo subject**: insere com os valores do `doc` + defaults para campos ausentes
+- **Subject existente com `doc`**: atualiza apenas os campos explicitamente declarados no `doc`
+- **Subject existente sem `doc`**: preserva metadados atuais, não sobrescreve com defaults
+
+### CONFIG.METADATA_HISTORY
+
+Audit trail de cada insert/update em `TABLE_METADATA`.
+Um registro por campo alterado.
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `history_id` | NUMBER AUTOINCREMENT PK | |
+| `table_name` | VARCHAR | |
+| `changed_at` | TIMESTAMP_NTZ | |
+| `changed_by` | VARCHAR | Ex: `sync_metadata.py` |
+| `change_type` | VARCHAR | `insert` ou `update` |
+| `field_changed` | VARCHAR | Campo que mudou (ex: `cdc_strategy`) |
+| `old_value` | VARCHAR | Valor anterior |
+| `new_value` | VARCHAR | Novo valor |
+| `source` | VARCHAR | `manual` ou `schema_registry` |
+
+### CONFIG.PROCESSING_LOG
+
+Append-only. Escrito pelo asset Dagster `log_processing_results` após cada `dbt run`.
+Uma linha por modelo dbt por execução.
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `log_id` | NUMBER AUTOINCREMENT PK | |
+| `table_name` | VARCHAR | Ex: `orders` |
+| `layer` | VARCHAR | `bronze`, `silver` ou `gold` |
+| `dbt_model` | VARCHAR | Ex: `bronze_orders` |
+| `dbt_invocation_id` | VARCHAR | UUID do run do dbt |
+| `run_id` | VARCHAR | ID do run do Dagster |
+| `status` | VARCHAR | `success` ou `error` |
+| `rows_processed` | NUMBER | COUNT(*) da tabela após o run |
+| `started_at` / `finished_at` | TIMESTAMP_NTZ | Timing do modelo |
+| `duration_seconds` | NUMBER(10,3) | |
+| `error_message` | VARCHAR(2000) | Preenchido se `status=error` |
+| `triggered_by` | VARCHAR | Ex: `sensor` |
+| `logged_at` | TIMESTAMP_NTZ | |
 
 ## Authentication: private key (recommended over password)
 
